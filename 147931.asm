@@ -73,38 +73,44 @@ wdc38		equ	08038h	; write sector ID to low comparator
         ljmp    chan2_prog_start
 
 chan1_prog_start:
-        movi    gc,7f3ah	; vars
+        movi    gc,7f3ah	; global vars
         movbi   [gc].0dh,0h
         movbi   cc,0h
+
         movbi   mc,20h
 x0016:  movbi   bc,55h
         addb    bc,[gc].0dh
         jz      bc,x0054
         dec     mc
         jnz     mc,x0016
+
         mov     [gc].0feh,ix
-        mov     [gc].0a0h,cc	; clear sys bus width
+        mov     [gc].0a0h,cc	; clear system bus width to 8-bit
         movb    [gc],[gc].0f6h
         jnbt    [gc],5,x0035
         setb    [gc].0a1h,6
-x0035:  movi    ga,x0206	; gb = sys addr 0ffff6h
+x0035:  movi    ga,x0206	; gb = SCP pointer (sys addr 0ffff6h)
         lpd     gb,[ga]
-        movb    [gc],[gb]	; [gc] = sys bus width
+        movb    [gc],[gb]	; [gc] = SCP.SYSBUS = system (Multibus) bus width
         jnbt    [gc],0,x0045
-        setb    [gc].0a0h,6	; set sys bus width
-x0045:  lpd     ga,[gb].2h	; ga = CCB (8089 SCB) ptr
+        setb    [gc].0a0h,6	; set system bus width to 16-bit
+x0045:  lpd     ga,[gb].2h	; ga = SCB ptr (iSBC 215 WUB: wake up block)
         jnbt    [gc].0a1h,6,x004e
         dec     mc
-x004e:  lpd     gb,[ga].2h	; gb = CIB+4 (8089 channel 1 CPB) ptr
+x004e:  lpd     gb,[ga].2h	; gb = [SCB+2] = 8089 channel 1 CCB ptr
+				;   (iSBC 215 CIB: channel invocation block offset 4)
         movp    [gc].2h,gb
-x0054:  movp    gb,[gc].2h	; gb = CIB+4 (8089 channel 1 CPB) ptr
-        lpd     ga,[gb].2h	; ga = (8089 TP) ???
-        addbi   ga,0fffch
+
+x0054:  movp    gb,[gc].2h	; gb = [SCB+2] = 8089 channel 1 CCB ptr
+				;   (iSBC 215 CIB: channel invocation block offset 4)
+        lpd     ga,[gb].2h	; ga = [CCB+2] = 8089 channel 1 CPB ptr
+        addbi   ga,0fffch	; ga = channel 1 CIB (starts 4 bytes before PCB)
         movp    [gc].6h,ga
-        lpd     gb,[ga].8h
+        lpd     gb,[ga].8h	; gb = [CIB+8] = IOPB pointer
         movp    [gc].0ah,gb
 
-        wid     16,16		; set system bus width, local bus always 16 bit
+; set system bus width, local bus always 16 bit
+        wid     16,16
         jbt     [gc].0a0h,6,x006e
         wid     8,16
 x006e:
@@ -112,7 +118,7 @@ x006e:
 ; copy 30-byte IOPB to local mem
         movi    ga,7f4ah
         movi    cc,0c408h
-        movbi   bc,1eh
+        movbi   bc,30
         xfer    
 
         setb    [gc].1h,3
@@ -263,7 +269,7 @@ x01e9:  jnbt    [gc].1ch,1,x01ef
 x01ef:  jnbt    [gc].1ch,4,x01f6
         call    [ga],x020a
 x01f6:  movi    gb,cmd_dispatch
-        addb    gb,[gc].1bh
+        addb    gb,[gc].1bh	; add 2 x iopb.function
         addb    gb,[gc].1bh
         movbi   [gc].0bch,0h
         mov     tp,[gb]
