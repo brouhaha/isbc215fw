@@ -73,8 +73,9 @@ vars_s		struc
 ccb:		ds	2
 		ds	2
 cib:		ds	2
+		ds	2
 iopb_ptr:	ds	2
-		ds	6
+		ds	4
 iopb:		ds	30
 vars_s		ends
 		
@@ -183,8 +184,8 @@ x00dc:  movb    [gc].0ceh,gb
         andbi   ix,3h
 
 	; copy act_count from local IOPB copy to system IOPB
-        mov     [gb].act_count,[gc].iopb+iopb_act_count
-        mov     [gb].act_count+2,[gc].iopb+iopb_act_count+2
+        mov     [gb].iopb_act_count,[gc].iopb+iopb_act_count
+        mov     [gb].iopb_act_count+2,[gc].iopb+iopb_act_count+2
 
         movi    cc,100h
         movbi   [gc].0dh,0ffffh
@@ -282,7 +283,7 @@ x01ba:  clr     [gc].1h,3
 x01cb:  movi    [gc].2fh,40h
         ljmp    x00b5
 
-x01d4:  movb    ix,[gc].iopb+iobp_unit
+x01d4:  movb    ix,[gc].iopb+iopb_unit
         andbi   ix,3h
         lcall   [ga].0fh,x208e
         setb    [gb+ix],5
@@ -308,7 +309,7 @@ x020a:  movb    [gc].5h,[gc].iopb+iopb_data_ptr+2
         andbi   [gc].5h,0fff0h
         movb    [gc].9h,[gc].iopb+iopb_data_ptr+2
         andbi   [gc].9h,0fh
-        movbi   [gc].iopb+iobp_data_ptr+2,0h
+        movbi   [gc].iopb+iopb_data_ptr+2,0h
         movi    gb,238h
         addb    gb,[gc].9h
         movb    [gc].iopb+iopb_data_ptr+3,[gb]
