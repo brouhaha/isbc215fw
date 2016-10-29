@@ -8,11 +8,72 @@
 ; * optional 24-bit addressing, for data buffers only
 
 
-hw_reg		equ	08000h	; base address of hardware registers,
-				; for use when not indexed from global
+; channel control values
+cc_port_to_port		equ	00000h
+cc_block_to_port  	equ	04000h
+cc_port_to_block  	equ	08000h
+cc_block_to_block 	equ	0c000h
+
+cc_no_translate		equ	00000h
+cc_translate		equ	02000h
+
+cc_no_sync		equ	00800h
+cc_source_sync		equ	01000h
+cc_dest_sync		equ	01800h
+
+cc_ga_src_gb_dest	equ	00000h
+cc_gb_src_ga_dest	equ	00400h
+
+cc_no_lock		equ	00000h
+cc_lock			equ	00200h
+
+cc_no_chain		equ	00000h
+cc_chain		equ	00100h
+
+cc_no_single_transfer	equ	00000h
+cc_single_transfer	equ	00080h
+
+cc_no_ext_term		equ	00000h
+cc_ext_term_res_0	equ	00020h
+cc_ext_term_res_4	equ	00040h
+cc_ext_term_res_8	equ	00060h
+
+cc_no_bc_term		equ	00000h
+cc_bc_term_res_0	equ	00008h
+cc_bc_term_res_4	equ	00010h
+cc_bc_term_res_8	equ	00018h
+
+; Note that TSH mask/compare termination field definitions in Figure 1-14 of
+; Intel 8089 Assembler User's Guide, August 1979, order number 9800938-01,
+; appear to have errors. The following definitions are from Figure 3-26 of
+; Intel iAPX 86, 88 User's Manual, August 1981, order number 210201-001.
+
+cc_no_search		equ	00000h
+cc_match_term_res_0	equ	00001h
+cc_match_term_res_4	equ	00002h
+cc_match_term_res_8	equ	00003h
+cc_no_match_term_res_0	equ	00004h
+cc_no_match_term_res_4	equ	00005h
+cc_no_match_term_res_8	equ	00006h
+
+
+cc_ga_port_to_gb_mem		equ	cc_port_to_block+cc_ga_src_gb_dest+cc_bc_term_res_0
+
+cc_ga_port_to_gb_mem_extt	equ	cc_port_to_block+cc_ga_src_gb_dest+cc_ext_term_res_0+cc_bc_term_res_0
+
+cc_gb_mem_to_ga_mem		equ	cc_block_to_block+cc_gb_src_ga_dest+cc_bc_term_res_0
+
+cc_ga_mem_to_gb_mem		equ	cc_block_to_block+cc_ga_src_gb_dest+cc_bc_term_res_0
+
+cc_gb_mem_to_ga_port_extt	equ	cc_block_to_port+cc_gb_src_ga_dest+cc_ext_term_res_0+cc_bc_term_res_0
+
+cc_gb_mem_to_ga_port_extt_no_bc	equ	cc_block_to_port+cc_gb_src_ga_dest+cc_ext_term_res_0
+
+
+dc_reg_base	equ	8000h	; for use when not indexed from global
 				; variables
 
-hw_reg_s	struc
+dc_reg_s	struc
 rdc00:		ds	2	; 8000h: read status
 s00_ready		equ	1
 s00_seek_complete	equ	2
@@ -70,9 +131,7 @@ counter_2:	ds	1	; 8024h
 counter_mode:	ds	1	; 8026h
 		ds	1
 
-rdc28:		ds	2	; 8028h: read contents of read buffer
-
-wdc28		equ	rdc28	; 8028h: write data to write buffer
+dc_data:	ds	2	; 8028h: data register
 
 		ds	6
 
@@ -85,7 +144,9 @@ wdc30		equ	rdc30	; 8030h: write sector ID to high comparator
 		
 wdc38:		ds	2	; 8038h: write sector ID to low comparator
 
-hw_reg_s	ends
+last_dc_reg:
+
+dc_reg_s	ends
 
 
 ; iSBX 217B Cartridge Tape Controller
@@ -141,7 +202,18 @@ fdc_latch_0	equ	8	; offset of latch 0
 fdc_latch_1	equ	0ch	; offset of latch 1
 
 
+; 2KiB of RAM is nominally from 4000h through 47ffh, but due to partial
+; decode is mirrored throughout the entire 4000h through 7fffh region.
+; The hard disk controller registers are from 8000h through 8039h.
+; Since the range of the offset in base plus offset addressing is 00h
+; through 0ffh, addressing both RAM variables and hard disk controller
+; registers from the same base requires the base address to be within
+; the last RAM mirror image, slightly below 8000h.
+
+var_base	equ	dc_reg_base+last_dc_reg-0100h
+
 vars_s		struc
+
 		ds	2
 ccb:		ds	2
 		ds	2
@@ -152,8 +224,10 @@ iopb_ptr:	ds	2
 iopb:		ds	30
 		ds	44
 wdc18_shadow:	ds	2
-		ds	106
+
+		org	8000h-var_base
 vhw:		ds	58	; hardware registers starting at 8000h
+
 vars_s		ends
 		
 
@@ -178,7 +252,7 @@ iopb_s		ends
         ljmp    chan2_prog_start
 
 chan1_prog_start:
-        movi    gc,7f3ah	; global vars
+        movi    gc,var_base
         movbi   [gc].0dh,0h
         movbi   cc,0h
 
@@ -223,7 +297,7 @@ x006e:
 
 ; copy 30-byte IOPB to local mem
         movi    ga,7f4ah
-        movi    cc,0c408h
+        movi    cc,cc_gb_mem_to_ga_mem
         movbi   bc,30
         xfer    
 
@@ -251,7 +325,7 @@ x00b5:  movbi   [gc].31h,0h
 
 	fill	00c5h,0ffh
 
-x00c5:  movi    gc,7f3ah
+x00c5:  movi    gc,var_base
         movb    ga,[gc].3bh
         addb    [gc].3ah,ga
         movi    ga,7e00h
@@ -275,7 +349,7 @@ x00dc:  movb    [gc].vhw+wdc08,gb
         movi    gc,7f00h
         lcall   [ga],x370e
         movb    mc,[gc].0f7h
-        movi    gc,7f3ah
+        movi    gc,var_base
         jmp     x012c
 
 x0118:  movbi   mc,1h
@@ -472,7 +546,7 @@ x02fd:  lcall   [ga],x205e
         jmp     x0319
 
 x0316:  movbi   bc,8h
-x0319:  movi    cc,0c408h
+x0319:  movi    cc,cc_gb_mem_to_ga_mem
         movbi   [ga].3h,8h
         lcall   [ga],x0a60
         mov     gb,[gc].54h
@@ -538,7 +612,7 @@ x03c6:  lcall   [ga].19h,x2971
         jbt     [gc].56h,7,x03ef
         jnbt    [gc].3ah,1,x03f2
 x03ef:  setb    [gc].16h,3
-x03f2:  movi    gc,7f3ah
+x03f2:  movi    gc,var_base
         jnzb    [gc].56h,x0400
         jbt     [gc],1,x0467
         jmp     x0458
@@ -586,9 +660,9 @@ cmd_xfer_status:
         jnbt    [gc],2,x048f		; XXX possibly following handles floppy or tape
         jnbt    [gc].iopb+iopb_modifier,6,x048b	 ; xfer long term status buffer
         lcall   [ga],x370e
-        movi    gc,7f3ah
+        movi    gc,var_base
 x048b:  movbi   [gc].0bdh,9h
-x048f:  movi    cc,0c008h
+x048f:  movi    cc,cc_ga_mem_to_gb_mem
         movbi   bc,0ch
         movbi   [ga].3h,10h
         lcall   [ga],x0a60
@@ -601,10 +675,10 @@ cmd_buf_io:
         lcall   [ga],x1def
         mov     bc,[gc].26h
         mov     [gc].14h,bc
-        movi    cc,0c408h
+        movi    cc,cc_gb_mem_to_ga_mem
         movbi   [ga].3h,20h
         jnzb    [gc].20h,x04c6
-        andi    cc,0fbffh
+        andi    cc,0ffffh-cc_gb_src_ga_dest	; reverse direction of xfer
 x04c6:  lcall   [ga],x0a60
         dec     bc
         ljmp    x00c5
@@ -658,7 +732,7 @@ cmd_format:
         ljz     bc,x068e
         movbi   [gc].14h,6h
         movbi   bc,6h
-        movi    cc,0c408h
+        movi    cc,cc_gb_mem_to_ga_mem
         movbi   [ga].3h,4h
         lcall   [ga],x0a60
         mov     [ga],[ga].0ah
@@ -714,7 +788,7 @@ x0629:  mov     gb,[gc].50h
         movi    gb,4428h
         mov     [gc].50h,gb
 x0636:  movb    [gc].41h,[gb]
-x063b:  movi    cc,8008h
+x063b:  movi    cc,cc_ga_port_to_gb_mem
         mov     [gc].vhw+wdc08,mc
         jnzb    [gc].0b9h,x064e
         lcall   [ga].10h,x177a
@@ -786,7 +860,7 @@ x0725:  jnbt    [gb],7,x0725
         movb    [gc],bc
         movb    bc,[ga+ix+]
         jnz     ix,x0725
-x072f:  movi    gc,7f3ah
+x072f:  movi    gc,var_base
         lcall   [ga],x14df
         ljmp    x068e
 
@@ -804,7 +878,7 @@ cmd_write_data:
 x0761:  jz      bc,x07b6
         mov     [ga].4h,bc
         lpd     gb,[gc].22h
-x076a:  movi    cc,0c408h
+x076a:  movi    cc,cc_gb_mem_to_ga_mem
         lcall   [ga],x0be4
         movbi   [ga].3h,2h
         lcall   [ga],x0a60
@@ -848,7 +922,7 @@ x07de:  lcall   [ga],x1000
         movp    gb,[ga]
         mov     bc,[ga].4h
         lcall   [ga],x0be4
-        movi    cc,0c008h
+        movi    cc,cc_ga_mem_to_gb_mem
         addbi   ga,9h
         movbi   [ga].3h,2h
         lcall   [ga],x0a60
@@ -887,7 +961,7 @@ x0846:  lcall   [ga],x20ba
         andbi   [gb].1h,0fh
         movbi   bc,5h
         movb    [gc].14h,bc
-        movi    cc,0c008h
+        movi    cc,cc_ga_mem_to_gb_mem
         lpd     gb,[gc].22h
         movbi   [ga].3h,2h
         lcall   [ga],x0a60
@@ -983,11 +1057,11 @@ x0954:  addbi   gc,0fffeh
         addb    gb,[gc].1h
         andi    gb,0ffh
         jz      gb,x09a0
-x0996:  movi    gc,7f3ah
+x0996:  movi    gc,var_base
         setb    [gc].2fh,4
         movbi   bc,0h
 x09a0:  addbi   ga,0fffch
-        movi    gc,7f3ah
+        movi    gc,var_base
         mov     tp,[ga]
 
 x09a9:  mov     mc,[ga]
@@ -1020,7 +1094,7 @@ x09f5:  movbi   bc,0h
         movi    [ga],8h
 x0a00:  movbi   [ga].2h,0h
         movp    [ga].1fh,gc
-        movi    gc,7f3ah
+        movi    gc,var_base
         movp    ga,[gc].4eh
         movp    [gc].2h,ga
         lpd     gb,[ga].2h
@@ -1121,7 +1195,7 @@ x0b27:  movi    gc,7f00h
         setb    [gc].16h,2
         movi    [gc].27h,0h
 x0b3e:  movi    ga,isbx_217_ch1		; tape data
-        movi    gc,7f3ah
+        movi    gc,var_base
         jmp     x0b50
 
 x0b49:  movi    ga,7f69h
@@ -1296,7 +1370,8 @@ x0d27:  jnbt    [ga].5h,0,x0d2e
         setb    [ga].7h,3
 x0d2e:  jmp     x0d52
 
-x0d31:  movi    [ga].6h,8028h
+x0d31:  movi    [ga].6h,8028h		; XXX possibly dc_reg_base+dc_data
+					;     or cc_ga_port_to_gb_mem_extt
         jbt     [gc].0a0h,6,x0d45
         wid     16,8
         jbt     [ga].5h,1,x0d4b
@@ -1355,7 +1430,7 @@ x1007:  movbi   mc,0h
         mov     [ga].9h,mc
         movb    [gc].3ah,mc
         wid     16,16
-        movi    cc,8028h
+        movi    cc,cc_ga_port_to_gb_mem_extt
         movb    [ga].0dh,mc
         movbi   bc,0fff1h
         addb    bc,[gc].0b8h
@@ -1590,13 +1665,13 @@ x12ed:  movb    ix,[gc].3dh
 x12fe:  jmce    [gb],x1310	; FDC status
         dec     bc
         jnz     bc,x12fe
-        movi    gc,7f3ah
+        movi    gc,var_base
         setb    [gc].31h,5
         jmp     x1335
 
 x1310:  movb    [gb].2h,ix
         jnzb    [ga].4h,x12ed
-        movi    gc,7f3ah
+        movi    gc,var_base
         mov     [gc].4ch,ga
         movbi   [gc].4eh,0ffffh
         not     ix,[gc].46h
@@ -1625,7 +1700,7 @@ x1365:  movi    [ga].8h,0h
         jnbt    [gc].1h,0,x1373
         movi    [gc].0c8h,140h
 x1373:  mov     [gc].vhw+wdc08,mc
-        movi    cc,8008h
+        movi    cc,cc_ga_port_to_gb_mem
         jnzb    [gc].0b9h,x1386
         lcall   [ga].10h,x177a
         jmp     x138b
@@ -1726,7 +1801,7 @@ x149f:  jnbt    [gb],7,x149f
         movb    [gc],bc
         movb    bc,[ga+ix+]
         jnz     ix,x149f
-x14a9:  movi    gc,7f3ah
+x14a9:  movi    gc,var_base
         movbi   [gc].vhw+wdc18,2h
         mov     ga,[gc].4ch
         lcall   [ga],x14df
@@ -1739,7 +1814,7 @@ x14c2:  jmcne   [gb],x14c8
 
 x14c8:  inc     cc
         jnz     cc,x14c2
-        movi    gc,7f3ah
+        movi    gc,var_base
         setb    [gc].31h,5
         setb    [gc].30h,4
         lcall   [ga].19h,x2971
@@ -1758,7 +1833,7 @@ x14f4:  call    [ga].0fh,x14bf
         dec     bc
         jnz     bc,x14f4
         dec     bc
-        movi    gc,7f3ah
+        movi    gc,var_base
         movb    ix,[ga].8h
         movi    gb,x3beb
         movb    [ga].9h,[gb+ix]
@@ -1799,7 +1874,7 @@ x1572:  movb    mc,[gc].1bh
         jz      mc,x158a
         setb    [gc].30h,0
 x158a:  mov     ix,[ga].0ah
-        movi    gc,7f3ah
+        movi    gc,var_base
         jnz     [gc].2fh,x1599
         jzb     [gc].31h,x159c
 x1599:  movbi   bc,0h
@@ -1809,7 +1884,7 @@ x159e:  addbi   ga,4h
         lcall   [ga],x1a03
         jbt     [gc],0,x15ff
         wid     16,16
-        movi    cc,8028h
+        movi    cc,cc_ga_port_to_gb_mem_extt
         movbi   mc,0fff1h
         addb    mc,[gc].0b8h
         jnz     mc,x15bd
@@ -1856,7 +1931,7 @@ x1609:  lcall   [ga].19h,x2971
 x1646:  movi    gb,4008h
 x164a:  mov     [gc].vhw+wdc30,[gc].3eh
         mov     [gc].vhw+wdc38,[gc].40h
-        movi    ga,8028h
+        movi    ga,dc_reg_base+dc_data
         movbi   bc,8h
         movbi   [gc].vhw+wdc00,6h
         xfer    
@@ -1885,7 +1960,7 @@ x1684:  inc     bc
 x1698:  movi    gb,4008h
 x169c:  movb    [gc].4fh,mc
         movbi   bc,8h
-        movi    ga,8028h
+        movi    ga,dc_reg_base+dc_data
         movbi   [gc].4eh,0h
         ljz     mc,x1700
 x16ae:  mov     [gc].vhw+wdc30,[gc].3eh
@@ -1906,14 +1981,14 @@ x16de:  movbi   bc,0h
         jmp     x16d1
 
 x16e4:  jnbt    [gc].vhw+rdc00,s00_data_sync,x16de
-x16e8:  movi    gc,7f3ah
+x16e8:  movi    gc,var_base
         jnzb    [gc].4eh,x16de
         movbi   bc,8h
         addbi   gb,0fff8h
         mov     [gc].vhw+wdc08,mc
         incb    [gc].4eh
         jnzb    [gc].4fh,x16ae
-x1700:  movi    gc,hw_reg+wdc00
+x1700:  movi    gc,dc_reg_base+wdc00
         movbi   [gc],6h
         xfer    
         movbi   mc,2h
@@ -1922,7 +1997,7 @@ x1700:  movi    gc,hw_reg+wdc00
         movi    bc,410h
         xfer    
         nop     
-        movi    gc,7f3ah
+        movi    gc,var_base
         jmp     x16ce
 
         jmp     x1724
@@ -1930,14 +2005,14 @@ x1700:  movi    gc,hw_reg+wdc00
 x1724:  movi    gb,4008h
         mov     [gc].vhw+wdc30,[gc].3eh
         mov     [gc].vhw+wdc38,[gc].40h
-        movi    ga,8028h
-        movi    [gc].vhw+wdc28,19h
+        movi    ga,dc_reg_base+dc_data
+        movi    [gc].vhw+dc_data,19h
         movbi   bc,8h
         movbi   [gc].vhw+wdc00,6h
         xfer    
         nop     
         tsl     [gc+ix],1h,x1757
-        movi    cc,4428h
+        movi    cc,cc_gb_mem_to_ga_port_extt
         xfer    
         nop     
         movbi   bc,0ffffh
@@ -1959,13 +2034,13 @@ x177a:  movi    gb,4008h
         mov     [gc].vhw+wdc30,[gc].3eh
         mov     [gc].vhw+wdc38,[gc].40h
         movbi   bc,8h
-        movi    ga,8028h
+        movi    ga,dc_reg_base+dc_data
         movbi   [gc].4eh,0h
-x1795:  movi    [gc].vhw+wdc28,0a1d9h
+x1795:  movi    [gc].vhw+dc_data,0a1d9h
         xfer    
         movbi   [gc].vhw+wdc00,6h
         tsl     [gc+ix],1h,x17b9
-        movi    cc,4428h
+        movi    cc,cc_gb_mem_to_ga_port_extt
         xfer    
         nop     
         movbi   bc,0ffffh
@@ -2034,14 +2109,14 @@ x185c:  movb    [gc].vhw+counter_1,cc
         mov     [gb+ix+],cc
         mov     [gb+ix+],cc
         movi    [gb+ix+],4e4eh
-        movi    cc,4420h
-        movi    [gc].vhw+wdc28,0a119h
+        movi    cc,cc_gb_mem_to_ga_port_extt_no_bc
+        movi    [gc].vhw+dc_data,0a119h
         jnbt    [gc].1h,0,x189e
         movi    [gc].0c8h,140h
         jmp     x189e
 
-x1895:  movi    cc,4428h
-        movi    [gc].vhw+wdc28,19h
+x1895:  movi    cc,cc_gb_mem_to_ga_port_extt
+        movi    [gc].vhw+dc_data,19h
 x189e:  lcall   [ga].12h,x1252
         jz      bc,x1923
 x18a6:  mov     [gc].vhw+wdc08,bc
@@ -2053,7 +2128,7 @@ x18a6:  mov     [gc].vhw+wdc08,bc
         jnbt    [gc].vhw+rdc08,s08_vendor,x18c9
         mov     [gc].vhw+wdc08,mc
 x18c5:  jnbt    [gc].0c7h,7,x18c5
-x18c9:  movi    ga,8028h
+x18c9:  movi    ga,dc_reg_base+dc_data
         movi    gb,441ah
         jnbt    [gc].vhw+rdc08,s08_vendor,x18d8
         mov     [gc].vhw+wdc30,mc
@@ -2067,10 +2142,10 @@ x18d8:  xfer
         movb    [gb].3h,ix
         movbi   bc,6h
         jnzb    [gc].0b9h,x18fd
-        movi    [gc].vhw+wdc28,0a119h
+        movi    [gc].vhw+dc_data,0a119h
         jmp     x1902
 
-x18fd:  movi    [gc].vhw+wdc28,19h
+x18fd:  movi    [gc].vhw+dc_data,19h
 x1902:  movbi   [gc].vhw+wdc00,1h
         jmp     x18d8
 
@@ -2439,7 +2514,7 @@ x1e52:  addbi   ga,0fff8h
 x1e57:  mov     [ga].8h,ix
         addbi   ga,0ah
         ljnzb   [gc].45h,x1ef1
-        movi    cc,8028h
+        movi    cc,cc_ga_port_to_gb_mem_extt
         movb    [ga].2h,[gc].43h
         movb    bc,[ga].2h
         addb    [ga].2h,bc
@@ -3260,7 +3335,7 @@ x291e:  dec     gb
         dec     mc
         jnz     mc,x291e
 x2928:  movi    [gc].18h,0f704h
-x292d:  movi    gc,7f3ah
+x292d:  movi    gc,var_base
         addbi   ga,19h
         lcall   [ga],x29af
         addbi   ga,0ffe7h
@@ -3526,7 +3601,7 @@ x2c79:  lcall   [ga].19h,x2971
         movi    mc,0f090h
         lcall   [ga].19h,x299e
         movb    [gb].2h,[gc].3dh
-x2c91:  movi    gc,7f3ah
+x2c91:  movi    gc,var_base
         jbt     [gc].vhw+rdc08,s08_int_11,x2ca9
         dec     bc
         jnz     bc,x2c91
@@ -3539,7 +3614,7 @@ x2ca9:  lcall   [ga],x29af
         movi    gc,7fdeh
         jnbt    [gc+ix],7,x2c91
         clr     [gc+ix],7
-        movi    gc,7f3ah
+        movi    gc,var_base
         jnz     mc,x2cc4
         ljmp    x2c17
 
@@ -3609,7 +3684,7 @@ x2d76:  dec     gb
         jnz     gb,x2d76
 x2d7b:  jmp     x2d11
 
-x2d7e:  movi    gc,7f3ah
+x2d7e:  movi    gc,var_base
         jbt     [gc].vhw+rdc08,s08_int_11,x2d96
         dec     bc
         jnz     bc,x2d7e
@@ -3622,7 +3697,7 @@ x2d96:  lcall   [ga],x29af
         movi    gc,7fdeh
         jnbt    [gc+ix],7,x2d7e
         clr     [gc+ix],7
-        movi    gc,7f3ah
+        movi    gc,var_base
         ljmp    x2d11
 
 x2daf:  movbi   [gc].53h,0h
@@ -3716,17 +3791,17 @@ x2eb0:  mov     ga,[gc].0eh
 
 chan2_prog_start:
         movi    cc,100h
-        movi    gc,7f3ah
+        movi    gc,var_base
         movbi   [gc].53h,0h
         movbi   [gc].3bh,0ffffh
-x2f50:  movi    gc,7f3ah
+x2f50:  movi    gc,var_base
         movi    ga,7e64h
         movbi   ix,0ffffh
         jnbt    [gc].53h,1,x2f63
         movbi   [gc].53h,0ffffh
 x2f63:  incb    [gc].53h
         movbi   [gc],0h
-x2f69:  movi    gc,7f3ah
+x2f69:  movi    gc,var_base
         mov     [gc].vhw+wdc38,ix
         jnzb    [gc].0dh,x2f7a
         movbi   [gc].0dh,0ffabh
@@ -3887,7 +3962,7 @@ x315d:  ori     mc,0eh
         lcall   [ga],x372c
         movbi   [gc].vhw+wdc30,0h
         andbi   [gc].16h,0ff9bh
-        movi    gc,7f3ah
+        movi    gc,var_base
         setb    [gc],2
         lcall   [ga],x3035
         ljmp    x2f69
@@ -3896,7 +3971,7 @@ x315d:  ori     mc,0eh
 x317b:  movi    gc,7f00h
         movbi   [gc].vhw+wdc30,1h
         movbi   [gc].17h,4h
-        movi    cc,8828h
+        movi    cc,8828h		; XXX is this a channel control word?
         lcall   [ga],x3752
         lcall   [ga],x3370
         jbt     [gc].vhw+rdc30,1,x319b
@@ -3907,7 +3982,7 @@ x319b:  ljmp    x3792
 x319f:  movi    gc,7f00h
         movbi   [gc].vhw+wdc30,11h
         movbi   [gc].17h,2h
-        movi    cc,5428h
+        movi    cc,5428h		; XXX is this a channel control word?
         lcall   [ga],x3752
         lcall   [ga],x3370
         jbt     [gc].vhw+rdc30,1,x31bf
@@ -4048,7 +4123,7 @@ x3370:  addbi   ga,3h
         lcall   [ga],x36f1
         movi    gb,7fe2h
         ljnbt   [gb+ix],0,x34ad
-        movi    gc,hw_reg+rdc00
+        movi    gc,dc_reg_base+rdc00
         mov     [ga],[gc]
         movi    gc,7f00h
         ljbt    [ga].1h,0,x34ad
@@ -4098,7 +4173,7 @@ x342b:  mov     bc,[gc].60h
         lpd     gb,[gc].5ch
 x3436:  movbi   [ga].3h,40h
         mov     [gc].0f9h,bc
-        movi    gc,7f3ah
+        movi    gc,var_base
         lcall   [ga],x0a71
         movi    gc,7f00h
         jbt     [gc].vhw+rdc30,1,x34b2
