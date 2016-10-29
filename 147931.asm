@@ -8,18 +8,6 @@
 ; * optional 24-bit addressing, for data buffers only
 
 
-isbx_217_ch0	equ	0c070h	; iSBX 217B/C tape
-isbx_217_ch1	equ	0c0b0h
-
-isbx_218a_ch0	equ	0c0d0h	; iSBX 218A floppy
-fdc_status	equ	0	; offset of status register
-fdc_data	equ	2	; offset of data register
-isbx_218a_ch1	equ	0c0e0h
-fdc_dack_gen	equ	0	; offset of DACK generator register
-fdc_reset_latch	equ	4	; offset of write reset latch
-fdc_latch_0	equ	8	; offset of latch 0
-fdc_latch_1	equ	0ch	; offset of latch 1
-
 hw_reg		equ	08000h	; base address of hardware registers,
 				; for use when not indexed from global
 				; variables
@@ -56,7 +44,7 @@ s08_vendor		equ	5
 s08_track_zero		equ	6
 s08_write_protected	equ	7
 
-wdc08		equ	wdc08	; 8008h: clear index and ID not compare latches
+wdc08		equ	rdc08	; 8008h: clear index and ID not compare latches
 
 		ds	6
 
@@ -100,6 +88,59 @@ wdc38:		ds	2	; 8038h: write sector ID to low comparator
 hw_reg_s	ends
 
 
+; iSBX 217B Cartridge Tape Controller
+; (iSBX 217C also supported)
+
+isbx_217_ch0		equ	0c070h
+isbx_217_ch1		equ	0c0b0h
+
+; registers relative to isbx_217_ch0:
+tc_ch0_reg_s	struc
+tc_cmd_param:		ds	1		; write
+tc_drive_status		equ	tc_cmd_param	; read
+			ds	1
+
+tc_cmd_func:		ds	1		; write
+tc_upi_status		equ	tc_cmd_func	; read
+tc_ch0_reg_s	ends
+
+; registers relative to isbx_217_ch0:
+tc_ch1_reg_s	struc
+tc_data:		ds	1		; read/write
+tc_ch1_reg_s	ends
+
+; tape controller commands:
+tc_cmd_reset		equ	00h
+tc_cmd_initialize	equ	01h
+tc_cmd_write		equ	02h
+tc_cmd_write_file_mark	equ	03h
+tc_cmd_read		equ	04h
+tc_cmd_read_file_mark	equ	05h	; not for 3M drive
+tc_cmd_read_status	equ	06h
+tc_cmd_rewind		equ	07h	; not for 3M drive
+tc_cmd_retension	equ	08h	; not for 3M drive
+tc_cmd_erase_tape	equ	09h	; not for 3M drive
+tc_cmd_unload		equ	0ch	; 3M drive only
+tc_cmd_continue		equ	14h	; 3M drive only
+tc_cmd_write_ram	equ	15h	; 3M drive only
+tc_cmd_read_ram		equ	16h	; 3M drive only
+tc_cmd_verify		equ	17h	; 3M drive only
+tc_cmd_start_of_xfer	equ	40h
+tc_cmd_end_of_xfer	equ	80h
+
+
+; iSBX 218A Floppy Disk Controller
+
+isbx_218a_ch0	equ	0c0d0h	; iSBX 218A floppy
+fdc_status	equ	0	; offset of status register
+fdc_data	equ	2	; offset of data register
+isbx_218a_ch1	equ	0c0e0h
+fdc_dack_gen	equ	0	; offset of DACK generator register
+fdc_reset_latch	equ	4	; offset of write reset latch
+fdc_latch_0	equ	8	; offset of latch 0
+fdc_latch_1	equ	0ch	; offset of latch 1
+
+
 vars_s		struc
 		ds	2
 ccb:		ds	2
@@ -109,9 +150,9 @@ cib:		ds	2
 iopb_ptr:	ds	2
 		ds	4
 iopb:		ds	30
-		ds	42
+		ds	44
 wdc18_shadow:	ds	2
-		ds	108
+		ds	106
 vhw:		ds	58	; hardware registers starting at 8000h
 vars_s		ends
 		
@@ -1079,7 +1120,7 @@ x0b27:  movi    gc,7f00h
         jnbt    [gc].vhw+rdc30,4,x0b3e
         setb    [gc].16h,2
         movi    [gc].27h,0h
-x0b3e:  movi    ga,isbx_217_ch1
+x0b3e:  movi    ga,isbx_217_ch1		; tape data
         movi    gc,7f3ah
         jmp     x0b50
 
@@ -1872,12 +1913,12 @@ x16e8:  movi    gc,7f3ah
         mov     [gc].vhw+wdc08,mc
         incb    [gc].4eh
         jnzb    [gc].4fh,x16ae
-x1700:  movi    gc,wdc00
+x1700:  movi    gc,hw_reg+wdc00
         movbi   [gc],6h
         xfer    
         movbi   mc,2h
-        ljbt    [gc],3,x16e8
-        mov     [gc],mc
+        ljbt    [gc],3,x16e8	; rdc00
+        mov     [gc],mc		; wdc00
         movi    bc,410h
         xfer    
         nop     
@@ -2005,7 +2046,7 @@ x189e:  lcall   [ga].12h,x1252
         jz      bc,x1923
 x18a6:  mov     [gc].vhw+wdc08,bc
         jbt     [gc].0c7h,7,x18a6
-        orbi    [gc].wdc18_shadow,0ffc0h
+        orbi    [gc].wdc18_shadow,0c0h
         movb    [gc].vhw+wdc18,[gc].wdc18_shadow
         movbi   [gc].vhw+wdc00,1h
         movbi   bc,6h
@@ -3979,19 +4020,19 @@ cmd_tape_rw_terminate:
         lcall   [ga],x3528
         jbt     [gc].vhw+rdc30,1,x3365
         jbt     [gc].vhw+rdc30,2,x336c
-        movbi   [gb].2h,0ff82h
+        movbi   [gb].tc_cmd_func,0ff82h
         lcall   [ga],x3528
         jbt     [gc].vhw+rdc30,1,x3365
         jbt     [gc].vhw+rdc30,2,x336c
-        movb    [gb],ix
+        movb    [gb],ix				; tc_cmd_param
         lcall   [ga],x3528
         jbt     [gc].vhw+rdc30,1,x3365
         jbt     [gc].vhw+rdc30,2,x336c
-        movbi   [gb].2h,0ff80h
+        movbi   [gb].tc_cmd_func,tc_cmd_end_of_xfer
         lcall   [ga],x3528
         jbt     [gc].vhw+rdc30,1,x3365
         jbt     [gc].vhw+rdc30,2,x336c
-        movb    [gb],ix
+        movb    [gb],ix				; tc_cmd_param
         lcall   [ga],x3528
         jbt     [gc].vhw+rdc30,1,x3365
         jbt     [gc].vhw+rdc30,2,x336c
@@ -4047,9 +4088,9 @@ x33e5:  movb    [gb].2h,[gc].17h
         jmp     x342b
 
 x3414:  movi    gb,isbx_217_ch0
-        movbi   [gb].2h,0ff82h
+        movbi   [gb].tc_cmd_func,0ff82h
         lcall   [ga],x3528
-        movb    [gb],ix
+        movb    [gb],ix			; tc_cmd_param
         lcall   [ga],x3528
         ljbt    [gc].vhw+rdc30,1,x34b2
 x342b:  mov     bc,[gc].60h
@@ -4077,11 +4118,11 @@ x3469:  andi    [gc].27h,1ffh
 
 x3479:  jnz     [gc].62h,x349d
         movi    gb,isbx_217_ch0
-        jnbt    [gb].2h,6,x3490
-        movbi   [gb],20h
-x3488:  jnbt    [gb].2h,0,x3488
-        movb    [ga],[gb]
-x3490:  movbi   [gb].2h,0ff81h
+        jnbt    [gb].tc_upi_status,6,x3490
+        movbi   [gb],20h		; tc_cmd_param
+x3488:  jnbt    [gb].tc_upi_status,0,x3488
+        movb    [ga],[gb]		; tc_drive_status
+x3490:  movbi   [gb].tc_cmd_func,0ff81h
         lcall   [ga],x3528
         movb    [gb],ix
         jmp     x34bd
@@ -4142,8 +4183,8 @@ x3523:  inc     [gc].50h
 x3528:  addi    ga,3h
 x352c:  movi    gb,isbx_217_ch0
         movi    mc,0ec78h
-x3534:  jbt     [gb].2h,0,x354a
-        jnbt    [gb].2h,1,x3557
+x3534:  jbt     [gb].tc_upi_status,0,x354a
+        jnbt    [gb].tc_upi_status,1,x3557
         inc     mc
         jnz     mc,x3534
         setb    [gc].1h,2
@@ -4212,7 +4253,7 @@ x35ff:  movi    gc,7f00h
         movbi   mc,68h
         movi    bc,0h
 x360a:  movi    gb,isbx_217_ch0
-        jbt     [gb].2h,0,x3638
+        jbt     [gb].tc_upi_status,0,x3638
         jbt     [ga],0,x3619
         jbt     [gc].16h,6,x3623
 x3619:  dec     bc
