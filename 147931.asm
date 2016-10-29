@@ -1,5 +1,12 @@
-; Disassembly of Intel iSBC-215G firmware, 147931-001 and -002
+; Disassembly of Intel iSBC 215G firmware, 147931-001 and -002
 ; symbols and comments copyright 2016 Eric Smith <spacewar@gmail.com>
+
+; Compared to the iSBC 215A, B, and C, the iSBX 215G adds these features:
+; * supports drives with open-loop or closed-loop positioning, or
+;   ANSI X3T9/1226 interface
+; * supports iSBX 217B or iSBX 217C cartridge tape interface
+; * optional 24-bit addressing, for data buffers only
+
 
 isbx_217_ch0	equ	0c070h	; iSBX 217B/C tape
 isbx_217_ch1	equ	0c0b0h
@@ -13,7 +20,12 @@ fdc_reset_latch	equ	4	; offset of write reset latch
 fdc_latch_0	equ	8	; offset of latch 0
 fdc_latch_1	equ	0ch	; offset of latch 1
 
-rdc00		equ	08000h	; read status
+hw_reg		equ	08000h	; base address of hardware registers,
+				; for use when not indexed from global
+				; variables
+
+hw_reg_s	struc
+rdc00:		ds	2	; 8000h: read status
 s00_ready		equ	1
 s00_seek_complete	equ	2
 s00_data_sync		equ	3
@@ -29,11 +41,12 @@ s00_opt_10		equ	12
 s00_illegal_request	equ	13
 s00_drive_request	equ	14
 s00_index		equ	15
-
-wdc00		equ	08000h	; write control data to disk drive and
+wdc00		equ	rdc00	; 8000h: write control data to disk drive and
 				; enable AM SEARCH/, RDGATE and WRT GATE
 
-rdc08		equ	08008h	; read status
+		ds	6
+
+rdc08:		ds	2	; 8008h: read status
 s08_isbx_218a_present	equ	0
 s08_int_01		equ	1
 s08_int_11		equ	2
@@ -43,29 +56,48 @@ s08_vendor		equ	5
 s08_track_zero		equ	6
 s08_write_protected	equ	7
 
-wdc08		equ	08008h	; clear index and ID not compare latches
+wdc08		equ	wdc08	; 8008h: clear index and ID not compare latches
 
-wdc10		equ	08010h	; write to disk control register
+		ds	6
 
-rdc18		equ	08018h	; raise 8089 channel 2 CA input
+rdc10:		ds	2	; 8010h
 
-wdc18		equ	08018h	; write to unit select and control registers
+wdc10		equ	rdc10	; 8010h: write to disk control register
 
-counter_0	equ	08020h
-counter_1	equ	08022h
-counter_2	equ	08024h
-counter_mode	equ	08026h
+		ds	6
 
-rdc28		equ	08028h	; read contents of read buffer
+rdc18:		ds	2	; 8018h: raise 8089 channel 2 CA input
 
-wdc28		equ	08028h	; write data to write buffer
+wdc18		equ	rdc18	; 8018h: write to unit select and control registers
 
-rdc30		equ	08030h	; read vendor bits 3 and 4
+		ds	6
 
-wdc30		equ	08030h	; write sector ID to high comparator
-				; start track format operation
+; 8253 timer
+counter_0:	ds	1	; 8020h
+		ds	1
+counter_1:	ds	1	; 8022h
+		ds	1
+counter_2:	ds	1	; 8024h
+		ds	1
+counter_mode:	ds	1	; 8026h
+		ds	1
 
-wdc38		equ	08038h	; write sector ID to low comparator
+rdc28:		ds	2	; 8028h: read contents of read buffer
+
+wdc28		equ	rdc28	; 8028h: write data to write buffer
+
+		ds	6
+
+rdc30:		ds	2	; 8030h: read vendor bits 3 and 4
+
+wdc30		equ	rdc30	; 8030h: write sector ID to high comparator
+				;        start track format operation
+
+		ds	6
+		
+wdc38:		ds	2	; 8038h: write sector ID to low comparator
+
+hw_reg_s	ends
 
 
 vars_s		struc
@@ -77,6 +109,10 @@ cib:		ds	2
 iopb_ptr:	ds	2
 		ds	4
 iopb:		ds	30
+		ds	42
+wdc18_shadow:	ds	2
+		ds	108
+vhw:		ds	58	; hardware registers starting at 8000h
 vars_s		ends
 		
 
@@ -112,9 +148,9 @@ x0016:  movbi   bc,55h
         dec     mc
         jnz     mc,x0016
 
-        mov     [gc].0feh,ix
+        mov     [gc].vhw+wdc38,ix
         mov     [gc].0a0h,cc	; clear system bus width to 8-bit
-        movb    [gc],[gc].0f6h
+        movb    [gc],[gc].vhw+rdc30
         jnbt    [gc],5,x0035
         setb    [gc].0a1h,6
 x0035:  movi    ga,x0206	; gb = SCP pointer (sys addr 0ffff6h)
@@ -134,6 +170,7 @@ x0054:  movp    gb,[gc].ccb	; gb = [SCB+2] = 8089 channel 1 CCB ptr
         lpd     ga,[gb].2h	; ga = [CCB+2] = 8089 channel 1 CPB ptr
         addbi   ga,0fffch	; ga = channel 1 CIB (starts 4 bytes before CPB)
         movp    [gc].cib,ga
+
         lpd     gb,[ga].8h	; gb = [CIB+8] = IOPB pointer
         movp    [gc].iopb_ptr,gb
 
@@ -163,7 +200,9 @@ x00a1:  movb    mc,[gc].iopb+iopb_function
         addi    mc,0e0h
         andi    mc,0ff00h
         ljz     mc,x0183
-x00b0:  movi    [gc].2fh,801h	; status byte 0, invalid iSBC 215G function
+
+cmd_invalid:
+	movi    [gc].2fh,801h	; status byte 0, invalid iSBC 215G function
 				; status byte 1, invalid function code
 x00b5:  movbi   [gc].31h,0h
         movbi   bc,0h
@@ -178,7 +217,7 @@ x00c5:  movi    gc,7f3ah
         movbi   gb,0h
         jnbt    [gc].0a1h,6,x00dc
         dec     gb
-x00dc:  movb    [gc].0ceh,gb
+x00dc:  movb    [gc].vhw+wdc08,gb
         movp    gb,[gc].iopb_ptr
         movb    ix,[gc].iopb+iopb_unit
         andbi   ix,3h
@@ -189,7 +228,7 @@ x00dc:  movb    [gc].0ceh,gb
 
         movi    cc,100h
         movbi   [gc].0dh,0ffffh
-        mov     mc,[gc].0deh
+        mov     mc,[gc].vhw+rdc18
         jbt     [gc].1h,3,x0118
         jnbt    [gc],2,x0118
         movi    gc,7f00h
@@ -226,30 +265,31 @@ cmd_dispatch:
         dw      cmd_write_data	; 06 hft write data
         dw      cmd_write_buf	; 07 hf- write buffer data
         dw      cmd_track_seek	; 08 hf- initiate track seek
-        dw      x00b0
-        dw      x00b0
+        dw      cmd_invalid
+        dw      cmd_invalid
         dw      cmd_spin_down	; 0b h-- spin down
-	dw	cmd_isbx_exec	; 0c --- iISBX execute
-        dw      cmd_isbx_xfer	; 0d --- iISBX transfer
+	dw	cmd_isbx_exec	; 0c --- iSBX execute
+        dw      cmd_isbx_xfer	; 0d --- iSBX transfer
         dw      cmd_buf_io	; 0e --- buffer I/O
 	dw	cmd_diag	; 0f hf- diagnostic
         dw      cmdx_tape_init			; 10 --t tape initialize
         dw      cmdx_tape_rewind		; 11 --t rewind
         dw      cmdx_tape_skip_file_mark	; 12 --t space forward one file mark
-        dw      x00b0
+        dw      cmd_invalid
         dw      cmdx_tape_write_file_mark	; 14 --t write file mark
-        dw      x00b0
-        dw      x00b0
+        dw      cmd_invalid
+        dw      cmd_invalid
         dw      cmdx_tape_erase			; 17 --t erase tape
         dw      cmdx_tape_load			; 18 --t load tape
-        dw      x00b0
-        dw      x00b0
-        dw      x00b0
+        dw      cmd_invalid
+        dw      cmd_invalid
+        dw      cmd_invalid
         dw      cmdx_tape_reset			; 1c --t tape reset
         dw      cmdx_tape_retension		; 1d --t retension tape
         dw      cmdx_tape_read_status		; 1e --t read tape status
         dw      cmdx_tape_rw_terminate		; 1f --t read/write terminate
-        dw      x01ba
+
+x0173:  dw      x01ba
         dw      x01ba
         dw      x01cb
         dw      x01ba
@@ -270,7 +310,7 @@ x019b:  ljnzb   [ga].3h,x00b5
         movb    [ga],[gc]
         andbi   [ga],0fff8h
         jnzb    [ga],x01cb
-        movi    gb,173h
+        movi    gb,x0173
         addb    gb,[gc].iopb+iopb_dev_code
         addb    gb,[gc].iopb+iopb_dev_code
         mov     tp,[gb]
@@ -328,7 +368,7 @@ x0238:  db      00h,10h,20h,30h
 x0248:  movbi   gb,0h
         jnbt    [gc].0a1h,6,x0251
         dec     gb
-x0251:  movb    [gc].0ceh,gb
+x0251:  movb    [gc].vhw+wdc08,gb
         movi    gb,x3beb
         orb     mc,[gb+ix]
         movp    gb,[gc].cib
@@ -347,7 +387,7 @@ x0270:  movb    [gb].1h,mc
 
 x0286:  jbt     [gc].iopb+iopb_modifier,0,x0299	; suppress interrupt
 x028a:  setb    [gc].5fh,0
-        mov     [gc].0d6h,[gc].5eh
+        mov     [gc].vhw+wdc10,[gc].5eh
         clr     [gc].5fh,0
         clr     [gc].1h,3
 x0299:  mov     tp,[ga].14h
@@ -362,18 +402,18 @@ cmd_initialize:
 x02ae:  jbt     [gc],0,x02f9
         jnz     ix,x02f9
         jbt     [gc].iopb+iopb_modifier,5,x02f2	; bypass board test
-        movbi   [gc].0ech,34h
-        movbi   [gc].0ech,74h
-        movbi   [gc].0ech,0ffb4h
-        movb    [gc].0e6h,bc
-        movb    [gc].0e6h,bc
-        movb    [gc].0e8h,bc
-        movb    [gc].0e8h,bc
-        movb    [gc].0eah,bc
-        movb    [gc].0eah,bc
-        movbi   [gc].0ech,3ah
-        movbi   [gc].0ech,7ah
-        movbi   [gc].0ech,0ffbah
+        movbi   [gc].vhw+counter_mode,34h
+        movbi   [gc].vhw+counter_mode,74h
+        movbi   [gc].vhw+counter_mode,0ffb4h
+        movb    [gc].vhw+counter_0,bc
+        movb    [gc].vhw+counter_0,bc
+        movb    [gc].vhw+counter_1,bc
+        movb    [gc].vhw+counter_1,bc
+        movb    [gc].vhw+counter_2,bc
+        movb    [gc].vhw+counter_2,bc
+        movbi   [gc].vhw+counter_mode,3ah
+        movbi   [gc].vhw+counter_mode,7ah
+        movbi   [gc].vhw+counter_mode,0ffbah
         lcall   [ga],x0941
         ljz     bc,x0376
         lcall   [ga],x09a9
@@ -634,7 +674,7 @@ x0629:  mov     gb,[gc].50h
         mov     [gc].50h,gb
 x0636:  movb    [gc].41h,[gb]
 x063b:  movi    cc,8008h
-        mov     [gc].0ceh,mc
+        mov     [gc].vhw+wdc08,mc
         jnzb    [gc].0b9h,x064e
         lcall   [ga].10h,x177a
         jmp     x0653
@@ -973,7 +1013,7 @@ x0a60:  mov     [gc].56h,cc
         jnbt    [gc].57h,2,x0a71
         wid     8,16
 x0a71:  movbi   [ga].8h,0ffffh
-        movb    [gc].0ceh,[gc].5h
+        movb    [gc].vhw+wdc08,[gc].5h
         jnbt    [gc].iopb+iopb_modifier,4,x0af2	; 24-bit addressing
         clr     [ga].3h,7
         mov     [gc].58h,[gc].22h
@@ -1036,7 +1076,7 @@ x0b20:  mov     ga,[gc].54h
 x0b27:  movi    gc,7f00h
         jbt     [gc].16h,5,x0b3e
         setb    [gc].16h,5
-        jnbt    [gc].0f6h,4,x0b3e
+        jnbt    [gc].vhw+rdc30,4,x0b3e
         setb    [gc].16h,2
         movi    [gc].27h,0h
 x0b3e:  movi    ga,isbx_217_ch1
@@ -1057,7 +1097,7 @@ x0b5e:  mov     ga,[gc].0eh
 x0b67:  incb    [ga].8h
         jzb     [ga].8h,x0b92
         addbi   [gc].5h,10h
-        movb    [gc].0ceh,[gc].5h
+        movb    [gc].vhw+wdc08,[gc].5h
         jbt     [ga].3h,7,x0b92
         mov     bc,[gc].58h
         jnbt    [ga].3h,6,x0b89
@@ -1192,7 +1232,7 @@ cmd_isbx_exec:
 
 cmd_isbx_xfer:
         lcall   [ga],x1def
-        movb    [gc].0ceh,[gc].5h
+        movb    [gc].vhw+wdc08,[gc].5h
         mov     [ga],[gc].1eh
         lpd     gb,[gc].22h
         movp    [ga].2h,gb
@@ -1286,7 +1326,7 @@ x102f:  movi    ix,0c6h
         movb    [ga].0bh,mc
         movbi   [ga].0ch,0h
         mov     [gc].4ch,ga
-x1043:  mov     [gc].0ceh,mc
+x1043:  mov     [gc].vhw+wdc08,mc
         jnzb    [gc].0b9h,x1052
         lcall   [ga].12h,x1698
         jmp     x1057
@@ -1299,7 +1339,7 @@ x1063:  incb    [ga].0ch
         jmp     x1094
 
 x1069:  jnzb    [ga].0dh,x1094
-        jnbt    [gc].0c6h,7,x1078
+        jnbt    [gc].vhw+rdc00,s00_timeout,x1078
         setb    [gc].30h,4
         ljmp    x13ce
 
@@ -1363,7 +1403,7 @@ x1120:  movbi   [ga].0bh,0h
         movb    [ga].0dh,[gc].43h
         movbi   [gc].3ah,0h
         lcall   [ga].12h,x1252
-x1136:  mov     [gc].0ceh,mc
+x1136:  mov     [gc].vhw+wdc08,mc
         jnzb    [gc].0b9h,x1145
         lcall   [ga].12h,x1698
         jmp     x114a
@@ -1453,7 +1493,7 @@ x1232:  mov     [ga].7h,[gb]
 x124f:  mov     tp,[ga].0fh
 
 x1252:  movi    bc,2260h
-x1256:  mov     [gc].0ceh,bc
+x1256:  mov     [gc].vhw+wdc08,bc
         jbt     [gc].0c7h,7,x1256
 x125d:  dec     bc
         jz      bc,x1269
@@ -1543,7 +1583,7 @@ x1344:  movi    ix,0c6h
 x1365:  movi    [ga].8h,0h
         jnbt    [gc].1h,0,x1373
         movi    [gc].0c8h,140h
-x1373:  mov     [gc].0ceh,mc
+x1373:  mov     [gc].vhw+wdc08,mc
         movi    cc,8008h
         jnzb    [gc].0b9h,x1386
         lcall   [ga].10h,x177a
@@ -1557,7 +1597,7 @@ x1397:  incb    [ga].8h
         jmp     x13bd
 
 x139d:  jnzb    [ga].9h,x13bd
-        jbt     [gc].0c6h,7,x13c4
+        jbt     [gc].vhw+rdc00,s00_timeout,x13c4
         incb    [ga].9h
         not     bc,[gc].3eh
         inc     bc
@@ -1646,7 +1686,7 @@ x149f:  jnbt    [gb],7,x149f
         movb    bc,[ga+ix+]
         jnz     ix,x149f
 x14a9:  movi    gc,7f3ah
-        movbi   [gc].0deh,2h
+        movbi   [gc].vhw+wdc18,2h
         mov     ga,[gc].4ch
         lcall   [ga],x14df
 x14b8:  addbi   ga,0fff9h
@@ -1665,7 +1705,7 @@ x14c8:  inc     cc
         mov     tp,[ga].0fh
 
 x14df:  mov     [ga].0ah,ix
-        movbi   [gc].0deh,0h
+        movbi   [gc].vhw+wdc18,0h
         movi    mc,0ffd0h
         movbi   bc,7h
         movbi   ix,2h
@@ -1773,11 +1813,11 @@ x1609:  lcall   [ga].19h,x2971
         jmp     x15fa
 
 x1646:  movi    gb,4008h
-x164a:  mov     [gc].0f6h,[gc].3eh
-        mov     [gc].0feh,[gc].40h
+x164a:  mov     [gc].vhw+wdc30,[gc].3eh
+        mov     [gc].vhw+wdc38,[gc].40h
         movi    ga,8028h
         movbi   bc,8h
-        movbi   [gc].0c6h,6h
+        movbi   [gc].vhw+wdc00,6h
         xfer    
         jz      mc,x1684
         dec     mc
@@ -1793,7 +1833,7 @@ x1677:  mov     ga,[gc].4ch
         jmp     x1684
 
 x1684:  inc     bc
-        movbi   [gc].0c6h,2h
+        movbi   [gc].vhw+wdc00,2h
         movi    bc,410h
         xfer    
         nop     
@@ -1807,11 +1847,11 @@ x169c:  movb    [gc].4fh,mc
         movi    ga,8028h
         movbi   [gc].4eh,0h
         ljz     mc,x1700
-x16ae:  mov     [gc].0f6h,[gc].3eh
-        mov     [gc].0feh,[gc].40h
+x16ae:  mov     [gc].vhw+wdc30,[gc].3eh
+        mov     [gc].vhw+wdc38,[gc].40h
         xfer    
-        movi    [gc].0c6h,6h
-        tsl     [gc].0c6h,2h,x16e4
+        movi    [gc].vhw+wdc00,6h
+        tsl     [gc].vhw+rdc00,s00_seek_complete,x16e4
         movi    bc,410h
         xfer    
         nop     
@@ -1824,12 +1864,12 @@ x16d1:  mov     ga,[gc].4ch
 x16de:  movbi   bc,0h
         jmp     x16d1
 
-x16e4:  jnbt    [gc].0c6h,3,x16de
+x16e4:  jnbt    [gc].vhw+rdc00,s00_data_sync,x16de
 x16e8:  movi    gc,7f3ah
         jnzb    [gc].4eh,x16de
         movbi   bc,8h
         addbi   gb,0fff8h
-        mov     [gc].0ceh,mc
+        mov     [gc].vhw+wdc08,mc
         incb    [gc].4eh
         jnzb    [gc].4fh,x16ae
 x1700:  movi    gc,wdc00
@@ -1847,12 +1887,12 @@ x1700:  movi    gc,wdc00
         jmp     x1724
 
 x1724:  movi    gb,4008h
-        mov     [gc].0f6h,[gc].3eh
-        mov     [gc].0feh,[gc].40h
+        mov     [gc].vhw+wdc30,[gc].3eh
+        mov     [gc].vhw+wdc38,[gc].40h
         movi    ga,8028h
-        movi    [gc].0eeh,19h
+        movi    [gc].vhw+wdc28,19h
         movbi   bc,8h
-        movbi   [gc].0c6h,6h
+        movbi   [gc].vhw+wdc00,6h
         xfer    
         nop     
         tsl     [gc+ix],1h,x1757
@@ -1875,14 +1915,14 @@ x1772:  addbi   ga,0fffdh
         jmp     x177a
 
 x177a:  movi    gb,4008h
-        mov     [gc].0f6h,[gc].3eh
-        mov     [gc].0feh,[gc].40h
+        mov     [gc].vhw+wdc30,[gc].3eh
+        mov     [gc].vhw+wdc38,[gc].40h
         movbi   bc,8h
         movi    ga,8028h
         movbi   [gc].4eh,0h
-x1795:  movi    [gc].0eeh,0a1d9h
+x1795:  movi    [gc].vhw+wdc28,0a1d9h
         xfer    
-        movbi   [gc].0c6h,6h
+        movbi   [gc].vhw+wdc00,6h
         tsl     [gc+ix],1h,x17b9
         movi    cc,4428h
         xfer    
@@ -1892,11 +1932,11 @@ x17af:  mov     ga,[gc].4ch
         movi    gb,4008h
         mov     tp,[ga].10h
 
-x17b9:  jnbt    [gc].0c6h,3,x17d0
+x17b9:  jnbt    [gc].vhw+rdc00,s00_data_sync,x17d0
         jnzb    [gc].4eh,x17d0
         addbi   bc,8h
         addbi   gb,0fff8h
-        mov     [gc].0ceh,mc
+        mov     [gc].vhw+wdc08,mc
         incb    [gc].4eh
         jmp     x1795
 
@@ -1907,12 +1947,12 @@ x17d6:  mov     [gc].4ch,ga
         ljbt    [gc],0,x192e
         mov     [gc].4eh,gb
         lcall   [ga].0fh,x1a2f
-        movbi   [gc].0ech,3ah
-        movbi   [gc].0eah,2h
-        movb    [gc].0eah,cc
-        jbt     [gc].0ceh,5,x180c
-        movb    [gc].0e6h,cc
-        movb    [gc].0e6h,cc
+        movbi   [gc].vhw+counter_mode,3ah
+        movbi   [gc].vhw+counter_2,2h
+        movb    [gc].vhw+counter_2,cc
+        jbt     [gc].vhw+rdc08,s08_vendor,x180c
+        movb    [gc].vhw+counter_0,cc
+        movb    [gc].vhw+counter_0,cc
         movbi   gb,0fff1h
         addb    gb,[gc].0b8h
         jnz     gb,x1843
@@ -1921,8 +1961,8 @@ x17d6:  mov     [gc].4ch,ga
 
 x180c:  jnzb    [gc].0b9h,x1821
         movi    gb,197ah
-        movb    [gc].0e6h,[gb+ix+]
-        movb    [gc].0e6h,[gb+ix]
+        movb    [gc].vhw+counter_0,[gb+ix+]
+        movb    [gc].vhw+counter_0,[gb+ix]
         jmp     x1843
 
 x1821:  jnzb    [gc].0bah,x182b
@@ -1933,16 +1973,16 @@ x182b:  movi    gb,195ah
         addb    gb,[gc].0b8h
         movb    ix,[gb]
 x1834:  add     [ga].19h,ix
-        movb    [gc].0e6h,[ga].19h
-        movb    [gc].0e6h,[ga].1ah
+        movb    [gc].vhw+counter_0,[ga].19h
+        movb    [gc].vhw+counter_0,[ga].1ah
 x1843:  jnzb    [gc].0bah,x1850
-        movb    [gc].0e8h,[gc].0c4h
+        movb    [gc].vhw+counter_1,[gc].0c4h
         jmp     x185c
 
 x1850:  movi    gb,196ah
         addb    gb,[gc].0b8h
-        movb    [gc].0e8h,[gb]
-x185c:  movb    [gc].0e8h,cc
+        movb    [gc].vhw+counter_1,[gb]
+x185c:  movb    [gc].vhw+counter_1,cc
         movi    gb,441ah
         movbi   ix,0h
         mov     [gb+ix+],[gc].3eh
@@ -1954,28 +1994,28 @@ x185c:  movb    [gc].0e8h,cc
         mov     [gb+ix+],cc
         movi    [gb+ix+],4e4eh
         movi    cc,4420h
-        movi    [gc].0eeh,0a119h
+        movi    [gc].vhw+wdc28,0a119h
         jnbt    [gc].1h,0,x189e
         movi    [gc].0c8h,140h
         jmp     x189e
 
 x1895:  movi    cc,4428h
-        movi    [gc].0eeh,19h
+        movi    [gc].vhw+wdc28,19h
 x189e:  lcall   [ga].12h,x1252
         jz      bc,x1923
-x18a6:  mov     [gc].0ceh,bc
+x18a6:  mov     [gc].vhw+wdc08,bc
         jbt     [gc].0c7h,7,x18a6
-        orbi    [gc].5ah,0ffc0h
-        movb    [gc].0deh,[gc].5ah
-        movbi   [gc].0c6h,1h
+        orbi    [gc].wdc18_shadow,0ffc0h
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
+        movbi   [gc].vhw+wdc00,1h
         movbi   bc,6h
-        jnbt    [gc].0ceh,5,x18c9
-        mov     [gc].0ceh,mc
+        jnbt    [gc].vhw+rdc08,s08_vendor,x18c9
+        mov     [gc].vhw+wdc08,mc
 x18c5:  jnbt    [gc].0c7h,7,x18c5
 x18c9:  movi    ga,8028h
         movi    gb,441ah
-        jnbt    [gc].0ceh,5,x18d8
-        mov     [gc].0f6h,mc
+        jnbt    [gc].vhw+rdc08,s08_vendor,x18d8
+        mov     [gc].vhw+wdc30,mc
 x18d8:  xfer    
         nop     
         inc     [gc].4eh
@@ -1986,21 +2026,21 @@ x18d8:  xfer
         movb    [gb].3h,ix
         movbi   bc,6h
         jnzb    [gc].0b9h,x18fd
-        movi    [gc].0eeh,0a119h
+        movi    [gc].vhw+wdc28,0a119h
         jmp     x1902
 
-x18fd:  movi    [gc].0eeh,19h
-x1902:  movbi   [gc].0c6h,1h
+x18fd:  movi    [gc].vhw+wdc28,19h
+x1902:  movbi   [gc].vhw+wdc00,1h
         jmp     x18d8
 
-x1909:  clr     [gc].5ah,6
-        jnbt    [gc].0ceh,5,x1916
-        movb    [gc].0deh,[gc].5ah
-x1916:  clr     [gc].5ah,7
+x1909:  clr     [gc].wdc18_shadow,6
+        jnbt    [gc].vhw+rdc08,s08_vendor,x1916
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
+x1916:  clr     [gc].wdc18_shadow,7
         movbi   bc,0ffffh
-        mov     [gc].0ceh,mc
+        mov     [gc].vhw+wdc08,mc
 x191f:  jnbt    [gc].0c7h,7,x191f
-x1923:  movb    [gc].0deh,[gc].5ah
+x1923:  movb    [gc].vhw+wdc18,[gc].wdc18_shadow
 x1929:  mov     ga,[gc].4ch
         mov     tp,[ga]
 
@@ -2075,19 +2115,19 @@ x194a:  db      1bh
 x1984:  mov     [ga].03h,ix
         jbt     [gc],0,x19c7
         lcall   [ga].0fh,x1a2f
-        movbi   [gc].0ech,32h
-        movbi   [gc].0e6h,1h
-        movb    [gc].0e6h,cc
-        movb    [gc].0eah,[ga].19h
-        movb    [gc].0eah,[ga].1ah
+        movbi   [gc].vhw+counter_mode,32h
+        movbi   [gc].vhw+counter_0,1h
+        movb    [gc].vhw+counter_0,cc
+        movb    [gc].vhw+counter_2,[ga].19h
+        movb    [gc].vhw+counter_2,[ga].1ah
         jnzb    [gc].0bah,x19b3
-        movb    [gc].0e8h,[gc].0c5h
+        movb    [gc].vhw+counter_1,[gc].0c5h
         jmp     x19bf
 
 x19b3:  movi    gb,19f3h
         addb    gb,[gc].0b8h
-        movb    [gc].0e8h,[gb]
-x19bf:  movb    [gc].0e8h,cc
+        movb    [gc].vhw+counter_1,[gb]
+x19bf:  movb    [gc].vhw+counter_1,cc
 x19c2:  mov     ix,[ga].3h
         mov     tp,[ga]
 
@@ -2136,12 +2176,12 @@ x19e3:  db      7h
 x1a03:  mov     [ga].3h,ix
         jbt     [gc],0,x19c7
         lcall   [ga].0fh,x1a2f
-        movbi   [gc].0ech,32h
-        movbi   [gc].0e6h,1h
-        movb    [gc].0e6h,cc
+        movbi   [gc].vhw+counter_mode,32h
+        movbi   [gc].vhw+counter_0,1h
+        movb    [gc].vhw+counter_0,cc
         addi    [ga].19h,0fffeh
-        movb    [gc].0eah,[ga].19h
-        movb    [gc].0eah,[ga].1ah
+        movb    [gc].vhw+counter_2,[ga].19h
+        movb    [gc].vhw+counter_2,[ga].1ah
         mov     ix,[ga].3h
         mov     tp,[ga]
 
@@ -2571,8 +2611,8 @@ x20ba:  movb    [gc].0b4h,ix
         ljbt    [gc],0,x20d8
         jzb     [gc].0b7h,x20fa
         movi    gb,x21d4
-        movb    [gc].0deh,[gb+ix]
-        movb    [gc].5ah,[gb+ix]
+        movb    [gc].vhw+wdc18,[gb+ix]
+        movb    [gc].wdc18_shadow,[gb+ix]
 x20d3:  movbi   bc,0ffffh
 x20d6:  mov     tp,[ga]
 
@@ -2582,7 +2622,7 @@ x20d8:  movbi   bc,0h
 x20e2:  movi    [gc+ix+],0h
         jnz     ix,x20e2
         movb    ix,[gc].0b4h
-x20ec:  jbt     [gc].0ceh,0,x20d6
+x20ec:  jbt     [gc].vhw+rdc08,s08_isbx_218a_present,x20d6
         andbi   [gc].3dh,4h
         orb     [gc].3dh,ix
         jmp     x20d3
@@ -2596,13 +2636,13 @@ x2107:  movb    [gc].50h,ix
         movi    gb,7fdah
         ljnbt   [gb+ix],0,x219f
 x2116:  movi    gb,x21d0
-        movbi   [gc].0deh,1h
+        movbi   [gc].vhw+wdc18,1h
         movb    [ga],[gb+ix]
         movbi   [ga].1h,0h
         movi    [gc].0c8h,48h
-        mov     [gc].0d6h,[ga]
+        mov     [gc].vhw+wdc10,[ga]
         movi    [gc].0c8h,58h
-        jnbt    [gc].0ceh,7,x213c
+        jnbt    [gc].vhw+rdc08,s08_write_protected,x213c
         setb    [gc].51h,7
 x213c:  movi    [gc].0c8h,48h
         movi    [gc].0c8h,40h
@@ -2684,7 +2724,7 @@ x2202:  clr     [gc].3dh,2
         setb    [gc].3dh,2
         jmp     x21fd
 
-x2210:  mov     [gc].0d6h,mc
+x2210:  mov     [gc].vhw+wdc10,mc
         mov     [gc].5eh,mc
         jmp     x21fd
 
@@ -2711,7 +2751,7 @@ x2247:  mov     [ga].4h,[ga]
         jnz     gb,x225a
         setb    [gc].5ch,6
 x225a:  movbi   [ga].6h,5dh
-x225e:  jbt     [gc].0ceh,6,x22be
+x225e:  jbt     [gc].vhw+rdc08,s08_track_zero,x22be
         dec     bc
         jnz     bc,x225e
         decb    [ga].6h
@@ -2720,7 +2760,7 @@ x225e:  jbt     [gc].0ceh,6,x22be
         ljmp    x2385
 
 x2275:  movi    [gc].0c8h,40h
-        movbi   [gc].0deh,0h
+        movbi   [gc].vhw+wdc18,0h
         ljbt    [gc].1ch,1,x2385
         ljbt    [gc].5ch,1,x238c
         ljbt    [gc].5ch,6,x2385
@@ -2738,36 +2778,36 @@ x2275:  movi    [gc].0c8h,40h
 x22b7:  andbi   [gc].5ch,0ffc8h
         jmp     x225a
 
-x22be:  movbi   [gc].0deh,1h
+x22be:  movbi   [gc].vhw+wdc18,1h
         movbi   bc,0ffffh
         movb    [ga],[ga].4h
         movi    [gc].0c8h,48h
         movbi   [ga].1h,0h
-        mov     [gc].0d6h,[ga]
+        mov     [gc].vhw+wdc10,[ga]
         addbi   [ga],0ffc0h
         movi    [gc].0c8h,248h
-x22e0:  jnbt    [gc].0ceh,7,x22ec
+x22e0:  jnbt    [gc].vhw+rdc08,s08_write_protected,x22ec
         dec     bc
         jnz     bc,x22e0
         jmp     x2275
 
 x22ec:  movi    [gc].0c8h,48h
-x22f1:  jbt     [gc].0ceh,7,x22fe
+x22f1:  jbt     [gc].vhw+rdc08,s08_write_protected,x22fe
         dec     bc
         jnz     bc,x22f1
         ljmp    x2275
 
 x22fe:  jbt     [ga],7,x233b
         movb    [ga],[ga].5h
-        mov     [gc].0d6h,[ga]
+        mov     [gc].vhw+wdc10,[ga]
         movi    [gc].0c8h,448h
-x2310:  jnbt    [gc].0ceh,7,x231d
+x2310:  jnbt    [gc].vhw+rdc08,s08_write_protected,x231d
         dec     bc
         jnz     bc,x2310
         ljmp    x2275
 
 x231d:  movi    [gc].0c8h,48h
-x2322:  ljbt    [gc].0ceh,7,x235b
+x2322:  ljbt    [gc].vhw+rdc08,s08_write_protected,x235b
         jnbt    [gc].5ch,3,x2332
         jbt     [gc].0c7h,6,x2332
         setb    [gc].5ch,2
@@ -2776,17 +2816,17 @@ x2332:  dec     bc
         ljmp    x2275
 
 x233b:  movi    [gc].0c8h,40h
-        movbi   [gc].0deh,0h
+        movbi   [gc].vhw+wdc18,0h
         movi    [gc].0c8h,440h
-x2349:  jnbt    [gc].0ceh,7,x2356
+x2349:  jnbt    [gc].vhw+rdc08,s08_write_protected,x2356
         dec     bc
         jnz     bc,x2349
         ljmp    x2275
 
-x2356:  movb    [ga],[gc].0d6h
+x2356:  movb    [ga],[gc].vhw+rdc10
 x235b:  movi    [gc].0c8h,40h
-        movbi   [gc].0deh,0h
-x2364:  jbt     [gc].0ceh,7,x237c
+        movbi   [gc].vhw+wdc18,0h
+x2364:  jbt     [gc].vhw+rdc08,s08_write_protected,x237c
         jnbt    [gc].5ch,3,x2373
         jbt     [gc].0c7h,6,x2373
         setb    [gc].5ch,2
@@ -2806,10 +2846,10 @@ x2392:  addbi   ga,5h
         lcall   [ga],x289b
         jz      bc,x23bb
         movi    [gc].0c8h,1c8h
-        setb    [gc].5ah,0
-        movb    [gc].0deh,[gc].5ah
-        clr     [gc].5ah,0
-        movb    [gc].0deh,[gc].5ah
+        setb    [gc].wdc18_shadow,0
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
+        clr     [gc].wdc18_shadow,0
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
         movi    [gc].0c8h,1c0h
         movbi   bc,0ffffh
 x23bb:  addbi   ga,0fffbh
@@ -2820,14 +2860,14 @@ x23c0:  addbi   ga,5h
         movb    [gc].43h,[gb].4h
         mov     [gc].46h,[gb].5h
         ljbt    [gc].1h,1,x2467
-        movb    [gc].0ceh,mc
-        jbt     [gc].0f6h,1,x23e2
+        movb    [gc].vhw+wdc08,mc
+        jbt     [gc].vhw+rdc30,1,x23e2
         setb    [gc].0b8h,0
 x23e2:  jbt     [gc].0c7h,5,x23e9
         setb    [gc].0b8h,1
-x23e9:  jnbt    [gc].0f6h,4,x23f0
+x23e9:  jnbt    [gc].vhw+rdc30,4,x23f0
         setb    [gc].0b8h,2
-x23f0:  jnbt    [gc].0f6h,5,x23f7
+x23f0:  jnbt    [gc].vhw+rdc30,5,x23f7
         setb    [gc].0b8h,3
 x23f7:  movb    bc,[gc].0b8h
         addbi   bc,0fff2h
@@ -2849,11 +2889,11 @@ x242d:  movb    bc,[gc].0b7h
         addb    [gc].0b7h,bc
         jnzb    [gc].0b7h,x2467
         jbt     [gc].1h,1,x2467
-        movbi   [gc].0deh,18h
+        movbi   [gc].vhw+wdc18,18h
         movi    bc,3d09h
 x2443:  dec     bc
         jnz     bc,x2443
-        movb    [gc].0deh,ix
+        movb    [gc].vhw+wdc18,ix
         movbi   [ga],62h
 x244e:  jnbt    [gc].0c7h,6,x2460
         dec     bc
@@ -2964,7 +3004,7 @@ x2585:  db      0ffh
         db      0ffh
         db      0ffh
 
-x2593:  movi    [gc].0d6h,0feh
+x2593:  movi    [gc].vhw+wdc10,0feh
         lcall   [ga],x2392
         jz      bc,x255f
         movbi   mc,12h
@@ -2980,11 +3020,12 @@ x25a2:  lcall   [ga],x28b5
 x25bb:  lcall   [ga],x1def
         mov     [gc].14h,[gc].26h
         jnbt    [gc].1h,4,x25cd
-x25c9:  lcall   [ga],x00b0
+x25c9:  lcall   [ga],cmd_invalid	; does this return?
+
 x25cd:  lcall   [ga],x20ba
         jz      bc,x25e1
         jzb     [gc].0b7h,x25e5
-        movi    [gc].0d6h,0fdh
+        movi    [gc].vhw+wdc10,0fdh
         lcall   [ga],x2392
 x25e1:  ljmp    x00c5
 
@@ -3101,13 +3142,13 @@ x2838:  addbi   ga,0fff7h
         mov     mc,[ga].3h
         mov     tp,[ga]
 
-x2840:  jnbt    [gc].0c6h,4,x2854
+x2840:  jnbt    [gc].vhw+rdc00,s00_fault,x2854
         movi    [gc].0c8h,50h
         movi    [gc].0c8h,0h
         setb    [gc].31h,5
         movbi   bc,0h
 x2854:  movi    bc,66d0h
-x2858:  jnbt    [gc].0c6h,1,x286b
+x2858:  jnbt    [gc].vhw+rdc00,s00_ready,x286b
         dec     bc
         jnz     bc,x2858
 x2861:  setb    [gc].30h,6
@@ -3123,7 +3164,7 @@ x2872:  call    [ga],x289b
         jzb     [ga].5h,x2854
         setb    [gc].31h,5
         setb    [gc].52h,6
-        movi    [gc].0d6h,0fah
+        movi    [gc].vhw+wdc10,0fah
         lcall   [ga],x2392
         jz      bc,x2861
         call    [ga],x289b
@@ -3142,7 +3183,7 @@ x28b0:  addbi   ga,0fffdh
 
 x28b5:  movbi   [gc].52h,0h
         movi    [gc].0c8h,3c0h
-        movb    [ga].2h,[gc].0d6h
+        movb    [ga].2h,[gc].vhw+rdc10
         movi    [gc].0c8h,1c0h
         notb    [ga].2h
         jnbt    [ga].2h,6,x28d3
@@ -3199,8 +3240,8 @@ x2971:  movi    gb,isbx_218a_ch0
         movbi   [ga].18h,7fh
         movi    mc,0f080h
         jnbt    [gb],4,x2998	; FDC status
-        movbi   [gc].0deh,2h
-        movbi   [gc].0deh,0h
+        movbi   [gc].vhw+wdc18,2h
+        movbi   [gc].vhw+wdc18,0h
 x2988:  decb    [ga].18h
         jmce    [gb],x2998
         jnzb    [ga].18h,x2988
@@ -3320,23 +3361,23 @@ x2aec:  mov     ix,[gc].58h
 
 x2af4:  not     mc,[gc].56h
         andi    mc,0ffh
-        setb    [gc].5ah,0
-        mov     [gc].0d6h,mc
+        setb    [gc].wdc18_shadow,0
+        mov     [gc].vhw+wdc10,mc
         movi    [gc].0c8h,0c8h
-        movb    [gc].0deh,[gc].5ah
-        clr     [gc].5ah,0
-        movb    [gc].0deh,[gc].5ah
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
+        clr     [gc].wdc18_shadow,0
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
         lcall   [ga],x289b
         jz      bc,x2ae9
         notb    mc,[gc].57h
         andi    mc,0ffh
-        mov     [gc].0d6h,mc
+        mov     [gc].vhw+wdc10,mc
         movi    [gc].0c8h,148h
-        setb    [gc].5ah,0
-        movb    [gc].0deh,[gc].5ah
-        clr     [gc].5ah,0
-        movb    [gc].0deh,[gc].5ah
-        movi    [gc].0d6h,0fbh
+        setb    [gc].wdc18_shadow,0
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
+        clr     [gc].wdc18_shadow,0
+        movb    [gc].vhw+wdc18,[gc].wdc18_shadow
+        movi    [gc].vhw+wdc10,0fbh
         lcall   [ga],x2392
         jmp     x2ae9
 
@@ -3357,11 +3398,11 @@ x2b5e:  addbi   ga,0fff9h
 
 x2b73:  movi    gb,40h
 x2b77:  mov     [gc].0c8h,gb
-        movb    gb,[gc].5ah
+        movb    gb,[gc].wdc18_shadow
 x2b7d:  orbi    gb,1h
-        movb    [gc].0deh,gb
+        movb    [gc].vhw+wdc18,gb
         andbi   gb,0fffeh
-        movb    [gc].0deh,gb
+        movb    [gc].vhw+wdc18,gb
         nop     
         nop     
         nop     
@@ -3417,7 +3458,7 @@ x2c22:  clr     [gc].5fh,7
         mov     ix,[gc].58h
         mov     tp,[ga]
 
-x2c30:  movi    [gc].0d6h,0fch
+x2c30:  movi    [gc].vhw+wdc10,0fch
         lcall   [ga],x2392
         jz      bc,x2c11
 x2c3c:  lcall   [ga],x28b5
@@ -3431,7 +3472,7 @@ x2c50:  movi    [gc].0c8h,40h
         setb    [gc].5fh,7
         movi    [gc].4eh,4b0h
 x2c5d:  movbi   mc,1h
-        jnbt    [gc].0ceh,6,x2c17
+        jnbt    [gc].vhw+rdc08,s08_track_zero,x2c17
         dec     [gc].4eh
         jz      [gc].4eh,x2c11
         lcall   [ga],x2b73
@@ -3445,7 +3486,7 @@ x2c79:  lcall   [ga].19h,x2971
         lcall   [ga].19h,x299e
         movb    [gb].2h,[gc].3dh
 x2c91:  movi    gc,7f3ah
-        jbt     [gc].0ceh,2,x2ca9
+        jbt     [gc].vhw+rdc08,s08_int_11,x2ca9
         dec     bc
         jnz     bc,x2c91
         decb    [gc].0c0h
@@ -3511,7 +3552,7 @@ x2d43:  dec     bc
         jnzb    [ga].0fh,x2d28
         jmp     x2d0b
 
-x2d52:  jnbt    [gc].0c6h,2,x2d65
+x2d52:  jnbt    [gc].vhw+rdc00,s00_seek_complete,x2d65
         dec     bc
         jnz     bc,x2d52
         decb    [gc].0bfh
@@ -3528,7 +3569,7 @@ x2d76:  dec     gb
 x2d7b:  jmp     x2d11
 
 x2d7e:  movi    gc,7f3ah
-        jbt     [gc].0ceh,2,x2d96
+        jbt     [gc].vhw+rdc08,s08_int_11,x2d96
         dec     bc
         jnz     bc,x2d7e
         decb    [gc].0bfh
@@ -3645,7 +3686,7 @@ x2f50:  movi    gc,7f3ah
 x2f63:  incb    [gc].53h
         movbi   [gc],0h
 x2f69:  movi    gc,7f3ah
-        mov     [gc].0feh,ix
+        mov     [gc].vhw+wdc38,ix
         jnzb    [gc].0dh,x2f7a
         movbi   [gc].0dh,0ffabh
         hlt     
@@ -3673,7 +3714,7 @@ x2fb1:  lcall   [ga],x20ba
         jzb     [gc].0b7h,x2fd4
         ljbt    [gb+ix],7,x305b
         ljbt    [gb+ix],2,x303e
-        jnbt    [gc].0c6h,1,x2fec
+        jnbt    [gc].vhw+rdc00,s00_ready,x2fec
 x2fcf:  clr     [gb+ix],1
         jmp     x2f69
 
@@ -3716,7 +3757,7 @@ x3035:  setb    [gb+ix],5
 x303e:  movbi   bc,0fff1h
         addb    bc,[gc].0b8h
         jz      bc,x306b
-        ljbt    [gc].0c6h,2,x2f69
+        ljbt    [gc].vhw+rdc00,s00_seek_complete,x2f69
         addbi   bc,2h
         jnz     bc,x305b
         movi    bc,1434h
@@ -3737,11 +3778,11 @@ x306b:  lcall   [ga],x28b5
         ljnbt   [ga].2h,1,x2f69
         jmp     x305b
 
-x308b:  ljbt    [gc].0ceh,0,x2f69
+x308b:  ljbt    [gc].vhw+rdc08,s08_isbx_218a_present,x2f69
         jbt     [gb+ix],7,x305b
         jbt     [gb+ix],2,x3099
         jbt     [gb+ix],4,x301b
-x3099:  ljnbt   [gc].0ceh,2,x2ffc
+x3099:  ljnbt   [gc].vhw+rdc08,s08_int_11,x2ffc
         lcall   [ga],x29af
         ljmp    x2ffc
 
@@ -3760,7 +3801,7 @@ x30a6:  movi    cc,100h
 x30cd:  ljnbt   [gb+ix],0,x2f69
         ljbt    [gc].16h,5,x2f69
         jbt     [gc].16h,6,x30eb
-        jbt     [gc].0f6h,7,x30e3
+        jbt     [gc].vhw+rdc30,7,x30e3
         jnbt    [gb+ix],2,x310f
         clr     [gb+ix],2
 x30e3:  setb    [gc].16h,6
@@ -3771,22 +3812,22 @@ x30eb:  movbi   mc,0h
         setb    [gc].1h,2
         jmp     x3156
 
-x30fb:  movbi   [gc].0f6h,0h
+x30fb:  movbi   [gc].vhw+wdc30,0h
         lcall   [ga],x3586
         ljbt    [gc].1h,2,x2f69
-        jbt     [gc].0f6h,1,x3156
+        jbt     [gc].vhw+rdc30,1,x3156
         jmp     x3159
 
 x310f:  ljbt    [gc].16h,6,x2f69
         ljnbt   [gb+ix],6,x2f69
-        movbi   [gc].0f6h,0h
+        movbi   [gc].vhw+wdc30,0h
         movbi   [gc].17h,6h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        jbt     [gc].0f6h,1,x3134
+        jbt     [gc].vhw+rdc30,1,x3134
         lcall   [ga],x3586
-        jnbt    [gc].0f6h,7,x313c
-x3134:  movbi   [gc].0f6h,0h
+        jnbt    [gc].vhw+rdc30,7,x313c
+x3134:  movbi   [gc].vhw+wdc30,0h
         ljmp    x2f69
 
 x313c:  movi    gb,7fe2h
@@ -3803,7 +3844,7 @@ x3156:  orbi    mc,0ffc0h
 x3159:  ori     mc,0fh
 x315d:  ori     mc,0eh
         lcall   [ga],x372c
-        movbi   [gc].0f6h,0h
+        movbi   [gc].vhw+wdc30,0h
         andbi   [gc].16h,0ff9bh
         movi    gc,7f3ah
         setb    [gc],2
@@ -3812,23 +3853,23 @@ x315d:  ori     mc,0eh
 
 ; XXX possibly cmd_floppy_read_data
 x317b:  movi    gc,7f00h
-        movbi   [gc].0f6h,1h
+        movbi   [gc].vhw+wdc30,1h
         movbi   [gc].17h,4h
         movi    cc,8828h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        jbt     [gc].0f6h,1,x319b
+        jbt     [gc].vhw+rdc30,1,x319b
         orbi    [gc].0ch,9h
 x319b:  ljmp    x3792
 
 ; XXX possibly cmd_floppy_write_data
 x319f:  movi    gc,7f00h
-        movbi   [gc].0f6h,11h
+        movbi   [gc].vhw+wdc30,11h
         movbi   [gc].17h,2h
         movi    cc,5428h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        jbt     [gc].0f6h,1,x31bf
+        jbt     [gc].vhw+rdc30,1,x31bf
         orbi    [gc].0ch,9h
 x31bf:  ljmp    x3792
 
@@ -3837,13 +3878,13 @@ cmd_tape_init:
         movbi   [gc].17h,0h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         lcall   [ga],x3586
         clr     [gc].1h,6
         jnzb    [gc],x31f1
         jnzb    [gc].1h,x31f1
         jnzb    [gc].2h,x31f1
-        clr     [gc].0f6h,1
+        clr     [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
         movbi   [gc].0ch,9h
 x31f1:  ljmp    x3792
 
@@ -3852,7 +3893,7 @@ cmd_tape_rewind:
         movbi   [gc].17h,7h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         movbi   [gc].0ch,9h
         ljmp    x378c
 
@@ -3862,33 +3903,33 @@ cmd_tape_skip_file_mark:
         movbi   [gc].17h,5h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         movbi   [gc].0ch,9h
         ljmp    x378c
 
 cmd_tape_write_file_mark:
         movi    gc,7f00h
-        movbi   [gc].0f6h,10h
+        movbi   [gc].vhw+wdc30,10h
         movbi   [gc].17h,3h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        jbt     [gc].0f6h,1,x324f
+        jbt     [gc].vhw+rdc30,1,x324f
         lcall   [ga],x3586
 x324f:  ljmp    x3792
 
 cmd_tape_erase:
         movi    gc,7f00h
-        movbi   [gc].0f6h,10h
+        movbi   [gc].vhw+wdc30,10h
         movbi   [gc].17h,6h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         lcall   [ga],x3586
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         movbi   [gc].17h,9h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         movbi   [gc].0ch,9h
         ljmp    x378c
 
@@ -3897,7 +3938,7 @@ cmd_tape_load:
         movbi   [gc].17h,7h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         movbi   [gc].0ch,9h
         movi    gc,7fe2h
         setb    [gc+ix],6
@@ -3909,7 +3950,7 @@ cmd_tape_reset:
         movbi   [gc].17h,1h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        jbt     [gc].0f6h,1,x32cd
+        jbt     [gc].vhw+rdc30,1,x32cd
         lcall   [ga],x3586
 x32cd:  ljmp    x3792
 
@@ -3918,7 +3959,7 @@ cmd_tape_retension:
         movbi   [gc].17h,8h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        ljbt    [gc].0f6h,1,x3792
+        ljbt    [gc].vhw+rdc30,1,x3792
         movbi   [gc].0ch,9h
         ljmp    x378c
 
@@ -3927,7 +3968,7 @@ cmd_tape_read_status:
         movbi   [gc].17h,6h
         lcall   [ga],x3752
         lcall   [ga],x3370
-        jbt     [gc].0f6h,1,x3306
+        jbt     [gc].vhw+rdc30,1,x3306
         lcall   [ga],x3586
 x3306:  ljmp    x3792
 
@@ -3936,24 +3977,24 @@ cmd_tape_rw_terminate:
         lcall   [ga],x36f1
         movi    gb,isbx_217_ch0
         lcall   [ga],x3528
-        jbt     [gc].0f6h,1,x3365
-        jbt     [gc].0f6h,2,x336c
+        jbt     [gc].vhw+rdc30,1,x3365
+        jbt     [gc].vhw+rdc30,2,x336c
         movbi   [gb].2h,0ff82h
         lcall   [ga],x3528
-        jbt     [gc].0f6h,1,x3365
-        jbt     [gc].0f6h,2,x336c
+        jbt     [gc].vhw+rdc30,1,x3365
+        jbt     [gc].vhw+rdc30,2,x336c
         movb    [gb],ix
         lcall   [ga],x3528
-        jbt     [gc].0f6h,1,x3365
-        jbt     [gc].0f6h,2,x336c
+        jbt     [gc].vhw+rdc30,1,x3365
+        jbt     [gc].vhw+rdc30,2,x336c
         movbi   [gb].2h,0ff80h
         lcall   [ga],x3528
-        jbt     [gc].0f6h,1,x3365
-        jbt     [gc].0f6h,2,x336c
+        jbt     [gc].vhw+rdc30,1,x3365
+        jbt     [gc].vhw+rdc30,2,x336c
         movb    [gb],ix
         lcall   [ga],x3528
-        jbt     [gc].0f6h,1,x3365
-        jbt     [gc].0f6h,2,x336c
+        jbt     [gc].vhw+rdc30,1,x3365
+        jbt     [gc].vhw+rdc30,2,x336c
         lcall   [ga],x355d
         jmp     x336c
 
@@ -3966,13 +4007,13 @@ x3370:  addbi   ga,3h
         lcall   [ga],x36f1
         movi    gb,7fe2h
         ljnbt   [gb+ix],0,x34ad
-        movi    gc,rdc00
+        movi    gc,hw_reg+rdc00
         mov     [ga],[gc]
         movi    gc,7f00h
         ljbt    [ga].1h,0,x34ad
         jnbt    [gc].16h,5,x33ae
-        jnbt    [gc].0f6h,0,x33b6
-        movb    [ga],[gc].0f6h
+        jnbt    [gc].vhw+rdc30,0,x33b6
+        movb    [ga],[gc].vhw+rdc30
         jnbt    [gc].16h,2,x33a8
         addbi   [ga],10h
 x33a8:  jbt     [ga],4,x33b6
@@ -3984,8 +4025,8 @@ x33b6:  setb    [gc],5
         ljmp    x34b6
 
 x33bc:  lcall   [ga],x3528
-        ljbt    [gc].0f6h,1,x34b2
-        jnbt    [gc].0f6h,0,x33e5
+        ljbt    [gc].vhw+rdc30,1,x34b2
+        jnbt    [gc].vhw+rdc30,0,x33e5
 x33c9:  movi    [gc].4eh,0h
         movi    [gc].50h,0h
         jnz     [gc].60h,x33df
@@ -3996,12 +4037,12 @@ x33df:  wid     8,8
 x33e5:  movb    [gb].2h,[gc].17h
         lcall   [ga],x3528
         movb    [gb],[gc].0f9h
-        ljbt    [gc].0f6h,1,x34b2
-        ljnbt   [gc].0f6h,0,x34bd
+        ljbt    [gc].vhw+rdc30,1,x34b2
+        ljnbt   [gc].vhw+rdc30,0,x34bd
         lcall   [ga],x3528
         movbi   [gb].2h,40h
         lcall   [ga],x3528
-        ljbt    [gc].0f6h,1,x34b2
+        ljbt    [gc].vhw+rdc30,1,x34b2
         movb    [gb],ix
         jmp     x342b
 
@@ -4010,7 +4051,7 @@ x3414:  movi    gb,isbx_217_ch0
         lcall   [ga],x3528
         movb    [gb],ix
         lcall   [ga],x3528
-        ljbt    [gc].0f6h,1,x34b2
+        ljbt    [gc].vhw+rdc30,1,x34b2
 x342b:  mov     bc,[gc].60h
         movi    [gc].60h,0h
         lpd     gb,[gc].5ch
@@ -4019,13 +4060,13 @@ x3436:  movbi   [ga].3h,40h
         movi    gc,7f3ah
         lcall   [ga],x0a71
         movi    gc,7f00h
-        jbt     [gc].0f6h,1,x34b2
+        jbt     [gc].vhw+rdc30,1,x34b2
         lcall   [ga],x34cc
         mov     mc,[gc].4eh
         add     [gc].27h,mc
         jz      bc,x3479
         lcall   [ga],x355d
-        jnbt    [gc].0f6h,4,x34bd
+        jnbt    [gc].vhw+rdc30,4,x34bd
         jbt     [gc].2h,3,x3469
         jnbt    [gc],7,x34bd
 x3469:  andi    [gc].27h,1ffh
@@ -4049,7 +4090,7 @@ x349d:  dec     [gc].62h
         jmp     x3436
 
 x34a3:  setb    [gc].1h,0
-        clr     [gc].0f6h,0
+        clr     [gc].vhw+wdc30,0	; XXX clr on a reg that isn't R/W?
         ljmp    x34b6
 
 x34ad:  setb    [gc],6
@@ -4057,8 +4098,8 @@ x34ad:  setb    [gc],6
 
 x34b2:  andbi   [gc].16h,0ffdbh
 x34b6:  orbi    [gc].0ch,0ffc9h
-        setb    [gc].0f6h,1
-x34bd:  jnbt    [gc].0f6h,0,x34c7
+        setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
+x34bd:  jnbt    [gc].vhw+rdc30,0,x34c7
         mov     [gc].60h,[gc].0f9h
 x34c7:  addbi   ga,0fffdh
         mov     tp,[ga]
@@ -4106,12 +4147,12 @@ x3534:  jbt     [gb].2h,0,x354a
         inc     mc
         jnz     mc,x3534
         setb    [gc].1h,2
-        setb    [gc].0f6h,1
+        setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
         jmp     x3557
 
 x354a:  call    [ga],x355d
-        jbt     [gc].0f6h,7,x3557
-        setb    [gc].0f6h,2
+        jbt     [gc].vhw+rdc30,7,x3557
+        setb    [gc].vhw+wdc30,2	; XXX clr on a reg that isn't R/W?
         jmp     x352c
 
 x3557:  addi    ga,0fffdh
@@ -4120,12 +4161,12 @@ x3557:  addi    ga,0fffdh
 x355d:  addi    ga,3h
         call    [ga],x3586
         jnbt    [gc].16h,5,x357c
-        jbt     [gc].0f6h,7,x357c
+        jbt     [gc].vhw+rdc30,7,x357c
         andbi   [gc].16h,0ffdbh
         jnzb    [gc].5h,x3578
         jzb     [gc].8h,x357c
 x3578:  orbi    [gc].0ch,0ff80h
-x357c:  andbi   [gc].0f6h,7dh
+x357c:  andbi   [gc].vhw+wdc30,7dh	; XXX clr on a reg that isn't R/W?
         addi    ga,0fffdh
         mov     tp,[ga]
 
@@ -4134,9 +4175,9 @@ x3586:  addi    ga,3h
         mov     [ga].2h,gb
         mov     [ga].4h,bc
         addi    ga,6h
-        clr     [gc].0f6h,1
+        clr     [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
         call    [ga],x35eb
-        jbt     [gc].0f6h,1,x35c0
+        jbt     [gc].vhw+rdc30,1,x35c0
         jbt     [gc].2h,5,x35c0
         jnzb    [gc].2h,x35c7
         jnzb    [gc],x35c0
@@ -4144,7 +4185,7 @@ x3586:  addi    ga,3h
         andi    mc,0feh
         jnz     mc,x35c0
         jbt     [gc].16h,5,x35bc
-        clr     [gc].0f6h,4
+        clr     [gc].vhw+wdc30,4	; XXX clr on a reg that isn't R/W?
 x35bc:  jzb     [gc].8h,x35d5
 x35c0:  orbi    [gc].0ch,0ffc0h
         jmp     x35d2
@@ -4152,7 +4193,7 @@ x35c0:  orbi    [gc].0ch,0ffc0h
 x35c7:  movi    gb,7fe2h
         jbt     [gc].2h,3,x35c0
         setb    [gc].0ch,7
-x35d2:  setb    [gc].0f6h,1
+x35d2:  setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
 x35d5:  orbi    [gc].0ch,9h
         addi    ga,0fffah
         mov     mc,[ga]
@@ -4179,8 +4220,8 @@ x3619:  dec     bc
         dec     mc
         jnz     mc,x360a
 x3623:  setb    [gc].1h,2
-        setb    [gc].0f6h,7
-        setb    [gc].0f6h,1
+        setb    [gc].vhw+wdc30,7	; XXX clr on a reg that isn't R/W?
+        setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
         addi    ga,0fffeh
         mov     ix,[ga]
 x3632:  addi    ga,0fffdh
@@ -4214,7 +4255,7 @@ x367c:  jnbt    [gc].0dh,4,x3683
 x3683:  jnbt    [gc].0dh,5,x368a
         setb    [gc].2h,5
 x368a:  jnbt    [gc].0dh,6,x3695
-        jnbt    [gc].0f6h,4,x3695
+        jnbt    [gc].vhw+rdc30,4,x3695
         setb    [gc].1h,7
 x3695:  jnbt    [gc].0dh,7,x369c
         setb    [gc].1h,4
@@ -4240,7 +4281,7 @@ x36dc:  jnbt    [gc].0fh,6,x36ea
         movbi   [gc].6h,0ffffh
         setb    [gc],7
         orbi    [gc].0ch,0ffc0h
-x36ea:  clr     [gc].0f6h,7
+x36ea:  clr     [gc].vhw+wdc30,7	; XXX clr on a reg that isn't R/W?
         ljmp    x3632
 
 x36f1:  mov     [ga].4h,ix
@@ -4281,7 +4322,7 @@ x3740:  mov     [gc+ix+],[gb+ix]
 x3752:  movb    [ga].3h,ix
         movb    mc,[ga].3h
         orbi    mc,0ff80h
-        jnbt    [gc].0f6h,0,x3762
+        jnbt    [gc].vhw+rdc30,0,x3762
         andbi   mc,7fh
 x3762:  movb    [gc].0f9h,mc
         mov     tp,[ga]
