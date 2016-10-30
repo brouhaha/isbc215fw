@@ -222,7 +222,14 @@ cib:		ds	2
 iopb_ptr:	ds	2
 		ds	4
 iopb:		ds	30
-		ds	44
+
+		ds	1
+
+short_term_status_buffer:
+		ds	12
+
+		ds	31
+
 wdc18_shadow:	ds	2
 
 		org	8000h-var_base
@@ -297,7 +304,7 @@ x0054:  movp    gb,[gc].ccb	; gb = [SCB+2] = 8089 channel 1 CCB ptr
 x006e:
 
 ; copy 30-byte IOPB to local mem
-        movi    ga,7f4ah
+        movi    ga,var_base+iopb
         movi    cc,cc_gb_mem_to_ga_mem
         movbi   bc,30
         xfer    
@@ -673,21 +680,24 @@ x0467:  movbi   [gb].2h,5fh
 x0473:  movb    [gb].2h,[ga]
         ljmp    x0361
 
+
 cmd_xfer_status:
         jnbt    [gc],2,x048f		; tape? jump if not
         jnbt    [gc].iopb+iopb_modifier,6,x048b	 ; xfer long term status buffer?
-        lcall   [ga],x370e		;
+        lcall   [ga],x370e		; yes
         movi    gc,var_base
 x048b:  movbi   [gc].0bdh,9h
 
 x048f:  movi    cc,cc_ga_mem_to_gb_mem
         movbi   bc,12			; status length
-        movbi   [ga].3h,10h
+        movbi   [ga].3h,10h		; set [ga].3 bit 4 to designate
+					;   local data address of short term status buffer
         lcall   [ga],x0a60		; do the transefer
         lcall   [ga],x1def
         movbi   [gc].iopb+iopb_act_count,12	; status length
         dec     bc
         ljmp    x00c5
+
 
 cmd_buf_io:
         lcall   [ga],x1def
@@ -695,11 +705,12 @@ cmd_buf_io:
         mov     [gc].iopb+iopb_act_count,bc
         movi    cc,cc_gb_mem_to_ga_mem
         movbi   [ga].3h,20h
-        jnzb    [gc].20h,x04c6
+        jnzb    [gc].iopb+iopb_head,x04c6
         andi    cc,0ffffh-cc_gb_src_ga_dest	; reverse direction of xfer
 x04c6:  lcall   [ga],x0a60
         dec     bc
         ljmp    x00c5
+
 
 cmd_track_seek:
         ljbt    [gc],2,x3778		; tape? jump if so
@@ -1124,12 +1135,12 @@ x09df:  mov     bc,[gb+ix+]
         jnz     ix,x09df
 
         movbi   bc,0ffh
-        movi    ga,7f69h
+        movi    ga,var_base+short_term_status_buffer
         movi    [ga],0h
         jmp     x0a00
 
 x09f5:  movbi   bc,0h
-        movi    ga,7f69h
+        movi    ga,var_base+short_term_status_buffer
         movi    [ga],8h
 x0a00:  movbi   [ga].2h,0h
         movp    [ga].1fh,gc
@@ -1237,8 +1248,8 @@ x0b3e:  movi    ga,isbx_217_ch1		; tape data
         movi    gc,var_base
         jmp     x0b50
 
-x0b49:  movi    ga,7f69h
-x0b4d:  lpd     gb,[gc].22h
+x0b49:  movi    ga,var_base+short_term_status_buffer
+x0b4d:  lpd     gb,[gc].iopb+iopb_data_ptr
 x0b50:  mov     [gc].4eh,ga
 
         dec     bc			; is the transfer length just 1 byte?
@@ -4456,7 +4467,8 @@ x3701:  mov     [gc+ix+],bc
         mov     gc,[ga].6h
         mov     tp,[ga]
 
-; XXX possibly cmd_floppy_xfer_status
+
+; copy tape long term status buffer to short term status buffer
 x370e:  mov     [ga].3h,ix
         movbi   ix,-12
         movi    gb,7f27h
@@ -4466,6 +4478,7 @@ x371c:  mov     [gc+ix+],[gb+ix]
         movi    gc,7f00h
         mov     ix,[ga].3h
         mov     tp,[ga]
+
 
 x372c:  mov     [ga].4h,ix
         mov     [ga].6h,gc
@@ -4493,6 +4506,7 @@ x3767:  movi    gc,7fe2h
         movi    gc,7f00h
         andbi   [gc].16h,09bh
         mov     tp,[ga]
+
 
 ; various tape commands
 x3778:  lcall   [ga],x36f1
