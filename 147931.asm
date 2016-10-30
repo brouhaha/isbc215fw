@@ -214,7 +214,7 @@ var_base	equ	dc_reg_base+last_dc_reg-0100h
 
 vars_s		struc
 
-		ds	2
+dev_code:	ds	2	; device code, copied from iopb
 ccb:		ds	2
 		ds	2
 cib:		ds	2
@@ -232,7 +232,8 @@ vars_s		ends
 		
 
 iopb_s		struc
-iopb_rsvd:	ds	4
+iopb_rsv0:	ds	2
+iopb_rsv2:	ds	2
 iopb_act_count:	ds	4
 iopb_dev_code:	ds	2
 iopb_unit:	ds	1
@@ -305,7 +306,7 @@ x006e:
         movi    ga,7e00h
         movbi   [ga].3h,0h
         movbi   mc,0ffech
-        movb    [gc],[gc].iopb+iopb_dev_code
+        movb    [gc],[gc].iopb+iopb_dev_code	; dev_code := iopb_dev_code
         andb    mc,[gc].iopb+iopb_unit
         jz      mc,x00a1
         movbi   [ga].3h,0ffffh
@@ -345,7 +346,7 @@ x00dc:  movb    [gc].vhw+wdc08,gb
         movbi   [gc].0dh,0ffh
         mov     mc,[gc].vhw+rdc18
         jbt     [gc].1h,3,x0118
-        jnbt    [gc],2,x0118
+        jnbt    [gc],2,x0118		; tape? jump if not
 
         movi    gc,7f00h
         lcall   [ga],x370e
@@ -359,6 +360,7 @@ x0118:  movbi   mc,1h
 x0123:  orbi    mc,080h
         jnz     bc,x012c
         orbi    mc,40h
+
 x012c:  lcall   [ga].14h,x0248
         hlt			; done processing cmd, wait for next CA from host
 
@@ -432,7 +434,7 @@ x019b:  ljnzb   [ga].3h,x00b5
         mov     tp,[gb]
 
 x01ba:  clr     [gc].1h,3
-        jbt     [gc],2,x01d4
+        jbt     [gc],2,x01d4		; tape? jump if so
         movb    [ga],[gc].iopb+iopb_function
         andbi   [ga],0f0h
         jzb     [ga],x01d4
@@ -473,7 +475,7 @@ x020a:  movb    [gc].5h,[gc].iopb+iopb_data_ptr+2
 
 
 cmd_spin_down:
-        ljbt    [gc],2,x3778	; XXX possibly to handle floppy
+        ljbt    [gc],2,x3778	; tape? jump if yes
         lcall   [ga],x25bb
 
 x0238:  db      00h,10h,20h,30h
@@ -508,16 +510,25 @@ x028a:  setb    [gc].5fh,0
         clr     [gc].1h,3
 x0299:  mov     tp,[ga].14h
 
+
 cmd_initialize:
         lcall   [ga],x1def
-        jnbt    [gc],2,x02ae	; XXX possibly following handles floppy or tape
+        jnbt    [gc],2,x02ae	; tape? jump if not
+
+; cmd_initialize for tape
         lcall   [ga],x36f1
         lcall   [ga],x372c
         jmp     x02fd
 
-x02ae:  jbt     [gc],0,x02f9
+; cmd_initialize for disk
+x02ae:  jbt     [gc],0,x02f9	; floppy? jump if true
+
+; cmd_initialize for hard disk
+; if drive 0, will normally perform ROM and RAM tests
         jnz     ix,x02f9
+
         jbt     [gc].iopb+iopb_modifier,5,x02f2	; bypass board test
+
         movbi   [gc].vhw+counter_mode,34h
         movbi   [gc].vhw+counter_mode,74h
         movbi   [gc].vhw+counter_mode,0b4h
@@ -530,17 +541,22 @@ x02ae:  jbt     [gc],0,x02f9
         movbi   [gc].vhw+counter_mode,3ah
         movbi   [gc].vhw+counter_mode,7ah
         movbi   [gc].vhw+counter_mode,0bah
-        lcall   [ga],x0941
+
+        lcall   [ga],test_rom
         ljz     bc,x0376
-        lcall   [ga],x09a9
+
+        lcall   [ga],test_ram
         ljz     bc,x0376
+
 x02f2:  movbi   [gc].iopb+iopb_act_count,55h
         jmp     x02fd
 
+; cmd_initialize for floppy disk
 x02f9:  movbi   [gc].iopb+iopb_act_count,8h
+
 x02fd:  lcall   [ga],x205e
         mov     [gc].54h,gb
-        jnbt    [gc],2,x0316
+        jnbt    [gc],2,x0316		; tape? jump if not
         movbi   [gc].iopb+iopb_act_count,1h
         movb    [gc].0bfh,[gb]
         movbi   bc,1h
@@ -552,7 +568,7 @@ x0319:  movi    cc,cc_gb_mem_to_ga_mem
         lcall   [ga],x0a60
         mov     gb,[gc].54h
         movi    ga,7fdah
-        jbt     [gc],2,x037a
+        jbt     [gc],2,x037a		; tape? jump if so
         jnbt    [gc],0,x0358
         addbi   ga,4h
         jnzb    [gb],x033e
@@ -658,11 +674,12 @@ x0473:  movb    [gb].2h,[ga]
         ljmp    x0361
 
 cmd_xfer_status:
-        jnbt    [gc],2,x048f		; XXX possibly following handles floppy or tape
+        jnbt    [gc],2,x048f		; tape? jump if not
         jnbt    [gc].iopb+iopb_modifier,6,x048b	 ; xfer long term status buffer?
         lcall   [ga],x370e		;
         movi    gc,var_base
 x048b:  movbi   [gc].0bdh,9h
+
 x048f:  movi    cc,cc_ga_mem_to_gb_mem
         movbi   bc,12			; status length
         movbi   [ga].3h,10h
@@ -674,8 +691,8 @@ x048f:  movi    cc,cc_ga_mem_to_gb_mem
 
 cmd_buf_io:
         lcall   [ga],x1def
-        mov     bc,[gc].26h
-        mov     [gc].14h,bc
+        mov     bc,[gc].iopb+iopb_req_count
+        mov     [gc].iopb+iopb_act_count,bc
         movi    cc,cc_gb_mem_to_ga_mem
         movbi   [ga].3h,20h
         jnzb    [gc].20h,x04c6
@@ -685,7 +702,7 @@ x04c6:  lcall   [ga],x0a60
         ljmp    x00c5
 
 cmd_track_seek:
-        ljbt    [gc],2,x3778	; XXX possibly to handle floppy
+        ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1def
         movb    [gc].34h,[gc].20h
         mov     [gc].32h,[gc].1eh
@@ -726,12 +743,12 @@ x0529:  movb    mc,[gc].34h
 x054c:  ljmp    x00c5
 
 cmd_format:
-        ljbt    [gc],2,x3778	; XXX possibly to handle floppy
+        ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1d00
         ljz     bc,x068e
         lcall   [ga],x1761
         ljz     bc,x068e
-        movbi   [gc].14h,6h
+        movbi   [gc].iopb+iopb_act_count,6h
         movbi   bc,6h
         movi    cc,cc_gb_mem_to_ga_mem
         movbi   [ga].3h,4h
@@ -866,7 +883,7 @@ x072f:  movi    gc,var_base
         ljmp    x068e
 
 cmd_write_data:
-        ljbt    [gc],2,x319f	; XXX possibly to handle floppy or tape
+        ljbt    [gc],2,x319f		; tape? jump if so
         lcall   [ga],x1d00
         jz      bc,x07b9
         lcall   [ga],x1761
@@ -907,7 +924,7 @@ x07b6:  movbi   bc,0ffh
 x07b9:  ljmp    x00c5
 
 cmd_read_data:
-        ljbt    [gc],2,x317b	; XXX possibly to handle floppy or tape
+        ljbt    [gc],2,x317b		; tape? jump if so
         lcall   [ga],x1d00
         jz      bc,x081f
         lcall   [ga],x1a03
@@ -941,7 +958,7 @@ x081c:  movbi   bc,0ffh
 x081f:  ljmp    x00c5
 
 cmd_read_id:
-        ljbt    [gc],2,x3778	; XXX possibly to handle floppy
+        ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1def
         movi    [gc].32h,0ffffh
         movi    [gc].34h,0ffffh
@@ -961,7 +978,7 @@ x0846:  lcall   [ga],x20ba
         andbi   [gb].4h,0f0h
         andbi   [gb].1h,0fh
         movbi   bc,5h
-        movb    [gc].14h,bc
+        movb    [gc].iopb+iopb_act_count,bc
         movi    cc,cc_ga_mem_to_gb_mem
         lpd     gb,[gc].22h
         movbi   [ga].3h,2h
@@ -969,14 +986,16 @@ x0846:  lcall   [ga],x20ba
         movbi   bc,0ffh
 x0881:  ljmp    x00c5
 
+
 cmd_diag:
-        ljbt    [gc],2,x3778	; XXX possibly to handle floppy
+        ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1def
-        movb    bc,[gc].1dh
-        jz      bc,x08be
+        movb    bc,[gc].iopb+iopb_modifier+1
+        jz      bc,diag_hd_rw_test	; 00h? read/write test
         dec     bc
-        ljz     bc,x093a
-        lcall   [ga],x20ba
+        ljz     bc,diag_test_rom	; 01h? ROM checksum test
+
+        lcall   [ga],x20ba	; other, seek to cyl 0 and verify
         ljz     bc,x0933
         lcall   [ga].0fh,x208e
         jnbt    [gb+ix],2,x08b3
@@ -988,7 +1007,8 @@ x08b3:  lcall   [ga],x2bc3
         ljz     bc,x0933
         jmp     x0936
 
-x08be:  mov     [gc].1eh,cc
+diag_hd_rw_test:
+	mov     [gc].1eh,cc
         movi    [gc].20h,100h
         lcall   [ga],x1d00
         jz      bc,x0933
@@ -1003,8 +1023,8 @@ x08be:  mov     [gc].1eh,cc
         andi    bc,0fffh
         and     bc,[gc].32h
         jz      bc,x0906
-        mov     [gc].36h,[gc].10h
-        mov     [gc].38h,[gc].12h
+        mov     [gc].36h,[gc].iopb+iopb_rsv0
+        mov     [gc].38h,[gc].iopb+iopb_rsv2
         setb    [gc].31h,6
         movbi   bc,0h
         jmp     x0933
@@ -1025,16 +1045,23 @@ x0910:  movi    [gb+ix+],55aah
 x0933:  setb    [gc].30h,1
 x0936:  ljmp    x00c5
 
-x093a:  call    [ga],x0941
+
+diag_test_rom:
+	call    [ga],test_rom
         ljmp    x00c5
 
-x0941:  addbi   ga,4h
+
+test_rom:
+	addbi   ga,4h
         movbi   bc,0ffh
         nop     
         nop     
+
         movi    gc,3ffeh
         mov     [ga],cc
         mov     [ga].2h,cc
+
+; compute ROM checksum
 x0954:  addbi   gc,0feh
         movb    gb,[gc]
         andi    gb,0ffh
@@ -1043,6 +1070,8 @@ x0954:  addbi   gc,0feh
         andi    gb,0ffh
         add     [ga].2h,gb
         jnz     gc,x0954
+
+; verify ROM checksum
         movi    gc,3ffeh
         movb    gb,[ga]
         addb    gb,[ga].1h
@@ -1051,6 +1080,7 @@ x0954:  addbi   gc,0feh
         addb    gb,[gc]
         andi    gb,0ffh
         jnz     gb,x0996
+
         movb    gb,[ga].2h
         addb    gb,[ga].3h
         not     gb
@@ -1058,6 +1088,7 @@ x0954:  addbi   gc,0feh
         addb    gb,[gc].1h
         andi    gb,0ffh
         jz      gb,x09a0
+
 x0996:  movi    gc,var_base
         setb    [gc].2fh,4
         movbi   bc,0h
@@ -1065,26 +1096,33 @@ x09a0:  addbi   ga,0fch
         movi    gc,var_base
         mov     tp,[ga]
 
-x09a9:  mov     mc,[ga]
+
+test_ram:
+	mov     mc,[ga]
         mov     cc,[gc].0a0h
         movp    gc,[gc].2h
+
         movi    ix,0f800h
         movi    gb,4800h
         movi    ga,0ffffh
 x09bd:  mov     [gb+ix+],ga
         jnz     ix,x09bd
+
         movi    ix,0f800h
 x09c6:  not     bc,[gb+ix+]
         jnz     bc,x09f5
         jnz     ix,x09c6
+
         movi    ix,0f800h
         movi    ga,0h
 x09d6:  mov     [gb+ix+],ga
         jnz     ix,x09d6
+
         movi    ix,0f800h
 x09df:  mov     bc,[gb+ix+]
         jnz     bc,x09f5
         jnz     ix,x09df
+
         movbi   bc,0ffh
         movi    ga,7f69h
         movi    [ga],0h
@@ -1210,7 +1248,7 @@ x0b50:  mov     [gc].4eh,ga
         nop     
 
 x0b5e:  mov     ga,[gc].0eh
-        jnbt    [gc],2,x0b67
+        jnbt    [gc],2,x0b67		; tape? jump if not
         jnz     bc,x0b92
 x0b67:  incb    [ga].8h
         jzb     [ga].8h,x0b92
@@ -1261,10 +1299,10 @@ x0be2:  mov     tp,[ga]
 x0be4:  movbi   mc,0h
         jnbt    [gc].15h,7,x0bed
         inc     mc
-x0bed:  add     [gc].14h,bc
+x0bed:  add     [gc].iopb+iopb_act_count,bc
         jz      mc,x0bfa
         jbt     [gc].15h,7,x0bfa
-        inc     [gc].16h
+        inc     [gc].iopb+iopb_act_count+2
 x0bfa:  mov     tp,[ga]
 
 x0bfc:  mov     [ga].0ah,ix
@@ -1286,7 +1324,7 @@ x0c1d:  movbi   [gb+ix],0h
         mov     tp,[ga]
 
 cmd_write_buf:
-        ljbt    [gc],2,x3778	; XXX possibly to handle floppy
+        ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1d00
         jz      bc,x0c90
         lcall   [ga],x1761
@@ -1319,7 +1357,7 @@ x0c8c:  movi    bc,0ffh
 x0c90:  ljmp    x00c5
 
 cmd_read_verify:
-        ljbt    [gc],2,x3778	; XXX possibly to handle floppy
+        ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1d00
         jz      bc,x0cd8
         lcall   [ga],x1a03
@@ -1343,21 +1381,23 @@ x0caf:  lcall   [ga],x1000
 x0cd5:  movbi   bc,0ffh
 x0cd8:  ljmp    x00c5
 
+
 cmd_isbx_exec:
-        lpd     gb,[gc].2ah
+        lpd     gb,[gc].iopb+iopb_gen_addr
         mov     [ga],gb
         mov     tp,[ga]
+
 
 cmd_isbx_xfer:
         lcall   [ga],x1def
         movb    [gc].vhw+wdc08,[gc].5h
-        mov     [ga],[gc].1eh
-        lpd     gb,[gc].22h
+        mov     [ga],[gc].iopb+iopb_cylinder	; iSBX bus I/O port address
+        lpd     gb,[gc].iopb+iopb_data_ptr
         movp    [ga].2h,gb
-        lpd     gb,[gc].26h
+        lpd     gb,[gc].iopb+iopb_req_count
         mov     [ga].5h,gb
         mov     bc,[ga].5h
-        movb    [ga].5h,[gc].20h
+        movb    [ga].5h,[gc].iopb+iopb_head	; transfer parameters
         wid     16,16
         jnbt    [ga].5h,7,x0d31
         movi    [ga].6h,4428h
@@ -1394,13 +1434,14 @@ x0d52:  mov     cc,[ga].6h
         not     bc
         inc     bc
         add     bc,[gc].26h
-        mov     [gc].14h,bc
-x0d6b:  movi    [gc].16h,0h
+        mov     [gc].iopb+iopb_act_count,bc
+x0d6b:  movi    [gc].iopb+iopb_act_count+2,0h
         movbi   bc,0ffh
         ljmp    x00c5
 
-x0d77:  mov     [gc].14h,[gc].26h
+x0d77:  mov     [gc].iopb+iopb_act_count,[gc].iopb+iopb_req_count
         jmp     x0d6b
+
 
 cmdx_tape_init:
         ljmp    cmd_tape_init
@@ -1422,6 +1463,7 @@ cmdx_tape_read_status:
         ljmp    cmd_tape_read_status
 cmdx_tape_rw_terminate:
         ljmp    cmd_tape_rw_terminate
+
 
 	fill	1000h,0ffh
 
@@ -2479,8 +2521,8 @@ x1dea:  addbi   ga,0fah
         mov     tp,[ga]
 
 x1def:  movbi   cc,0h
-        mov     [gc].14h,cc
-        mov     [gc].16h,cc
+        mov     [gc].iopb+iopb_act_count,cc
+        mov     [gc].iopb+iopb_act_count+2,cc
         mov     [gc].2fh,cc
         movb    [gc].31h,cc
         mov     [gc].3ah,cc
@@ -2663,7 +2705,7 @@ x200a:  movb    mc,[gc].34h
         movi    ga,7fdah
         addb    ga,[gc].0b4h
         jnbt    [ga],7,x2024
-        jbt     [gc].1ah,4,x202e
+        jbt     [gc].iopb+iopb_unit,4,x202e
         jmp     x2028
 
 x2024:  jzb     [gb].2h,x202e
@@ -2689,7 +2731,7 @@ x2048:  mov     [ga].4h,mc
 x2059:  movbi   bc,0h
 x205c:  mov     tp,[ga]
 
-x205e:  jnbt    [gc],2,x2068
+x205e:  jnbt    [gc],2,x2068		; tape? jump if not
         movi    gb,7fe2h
         jmp     x2072
 
@@ -2698,7 +2740,7 @@ x2068:  movi    gb,7f9ah
         addbi   gb,20h
 x2072:  movb    [ga].3h,ix
 x2075:  jz      ix,x2089
-        jbt     [gc],2,x2081
+        jbt     [gc],2,x2081		; tape? jump if so
         addbi   gb,8h
         jmp     x2084
 
@@ -2710,7 +2752,7 @@ x2089:  movb    ix,[ga].3h
         mov     tp,[ga]
 
 x208e:  movi    gb,7fdah
-        jbt     [gc],2,x209e
+        jbt     [gc],2,x209e		; tape? jump if so
         jnbt    [gc],0,x209b
         addbi   gb,4h
 x209b:  mov     tp,[ga].0fh
@@ -3137,7 +3179,7 @@ x25a2:  lcall   [ga],x28b5
         jmp     x255b
 
 x25bb:  lcall   [ga],x1def
-        mov     [gc].14h,[gc].26h
+        mov     [gc].iopb+iopb_act_count,[gc].iopb+iopb_req_count
         jnbt    [gc].1h,4,x25cd
 x25c9:  lcall   [ga],cmd_invalid	; does this return?
 
@@ -4452,11 +4494,7 @@ x3767:  movi    gc,7fe2h
         andbi   [gc].16h,09bh
         mov     tp,[ga]
 
-; XXX possibly cmd_floppy_spin_down
-; XXX possibly cmd_floppy_track_seek
-; XXX possibly cmd_floppy_format
-; XXX possibly cmd_floppy_read_id
-; XXX possibly cmd_floppy_diag
+; various tape commands
 x3778:  lcall   [ga],x36f1
         setb    [gc],6
         movbi   [gc].0ch,0c9h
