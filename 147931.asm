@@ -283,7 +283,7 @@ x004e:  lpd     gb,[ga].2h	; gb = [SCB+2] = 8089 channel 1 CCB ptr
 x0054:  movp    gb,[gc].ccb	; gb = [SCB+2] = 8089 channel 1 CCB ptr
 				;   (iSBC 215 CIB: channel invocation block offset 4)
         lpd     ga,[gb].2h	; ga = [CCB+2] = 8089 channel 1 CPB ptr
-        addbi   ga,0fffch	; ga = channel 1 CIB (starts 4 bytes before CPB)
+        addbi   ga,-4		; ga = channel 1 CIB (starts 4 bytes before CPB)
         movp    [gc].cib,ga
 
         lpd     gb,[ga].8h	; gb = [CIB+8] = IOPB pointer
@@ -342,10 +342,11 @@ x00dc:  movb    [gc].vhw+wdc08,gb
         mov     [gb].iopb_act_count+2,[gc].iopb+iopb_act_count+2
 
         movi    cc,100h
-        movbi   [gc].0dh,0ffffh
+        movbi   [gc].0dh,0ffh
         mov     mc,[gc].vhw+rdc18
         jbt     [gc].1h,3,x0118
         jnbt    [gc],2,x0118
+
         movi    gc,7f00h
         lcall   [ga],x370e
         movb    mc,[gc].0f7h
@@ -355,11 +356,11 @@ x00dc:  movb    [gc].vhw+wdc08,gb
 x0118:  movbi   mc,1h
         jnz     [gc].2fh,x0123
         jzb     [gc].31h,x012c
-x0123:  orbi    mc,0ff80h
+x0123:  orbi    mc,080h
         jnz     bc,x012c
         orbi    mc,40h
 x012c:  lcall   [ga].14h,x0248
-        hlt     
+        hlt			; done processing cmd, wait for next CA from host
 
 ; command dispatch table
 
@@ -414,8 +415,8 @@ x0173:  dw      x01ba
         dw      x01cb
 
 x0183:  movb    [ga],[gc].iopb+iopb_function
-        addbi   [ga],0fff4h
-        andbi   [ga],0fffch
+        addbi   [ga],0f4h
+        andbi   [ga],0fch
         jnzb    [ga],x019b
         movb    [ga],[gc].iopb+iopb_function
         incb    [ga]
@@ -423,7 +424,7 @@ x0183:  movb    [ga],[gc].iopb+iopb_function
 x019b:  ljnzb   [ga].3h,x00b5
         jnzb    [gc].iopb+iopb_dev_code+1,x01cb
         movb    [ga],[gc]
-        andbi   [ga],0fff8h
+        andbi   [ga],0f8h
         jnzb    [ga],x01cb
         movi    gb,x0173
         addb    gb,[gc].iopb+iopb_dev_code
@@ -433,7 +434,7 @@ x019b:  ljnzb   [ga].3h,x00b5
 x01ba:  clr     [gc].1h,3
         jbt     [gc],2,x01d4
         movb    [ga],[gc].iopb+iopb_function
-        andbi   [ga],0fff0h
+        andbi   [ga],0f0h
         jzb     [ga],x01d4
 x01cb:  movi    [gc].2fh,40h
         ljmp    x00b5
@@ -461,7 +462,7 @@ x0206:  dw      0fff6h
 
 ; mangle data buffer address if 24-bit addressing is enabled
 x020a:  movb    [gc].5h,[gc].iopb+iopb_data_ptr+2
-        andbi   [gc].5h,0fff0h
+        andbi   [gc].5h,0f0h
         movb    [gc].9h,[gc].iopb+iopb_data_ptr+2
         andbi   [gc].9h,0fh
         movbi   [gc].iopb+iopb_data_ptr+2,0h
@@ -494,7 +495,7 @@ x0263:  jzb     [gb].3h,x0270
         jmp     x0263
 
 x0270:  movb    [gb].1h,mc
-        movbi   [gb].3h,0ffffh
+        movbi   [gb].3h,0ffh
         jbt     [gc].1h,3,x0286
         lcall   [ga].0fh,x208e
         jnbt    [gb+ix],5,x0299
@@ -519,7 +520,7 @@ x02ae:  jbt     [gc],0,x02f9
         jbt     [gc].iopb+iopb_modifier,5,x02f2	; bypass board test
         movbi   [gc].vhw+counter_mode,34h
         movbi   [gc].vhw+counter_mode,74h
-        movbi   [gc].vhw+counter_mode,0ffb4h
+        movbi   [gc].vhw+counter_mode,0b4h
         movb    [gc].vhw+counter_0,bc
         movb    [gc].vhw+counter_0,bc
         movb    [gc].vhw+counter_1,bc
@@ -528,7 +529,7 @@ x02ae:  jbt     [gc],0,x02f9
         movb    [gc].vhw+counter_2,bc
         movbi   [gc].vhw+counter_mode,3ah
         movbi   [gc].vhw+counter_mode,7ah
-        movbi   [gc].vhw+counter_mode,0ffbah
+        movbi   [gc].vhw+counter_mode,0bah
         lcall   [ga],x0941
         ljz     bc,x0376
         lcall   [ga],x09a9
@@ -658,16 +659,16 @@ x0473:  movb    [gb].2h,[ga]
 
 cmd_xfer_status:
         jnbt    [gc],2,x048f		; XXX possibly following handles floppy or tape
-        jnbt    [gc].iopb+iopb_modifier,6,x048b	 ; xfer long term status buffer
-        lcall   [ga],x370e
+        jnbt    [gc].iopb+iopb_modifier,6,x048b	 ; xfer long term status buffer?
+        lcall   [ga],x370e		;
         movi    gc,var_base
 x048b:  movbi   [gc].0bdh,9h
 x048f:  movi    cc,cc_ga_mem_to_gb_mem
-        movbi   bc,0ch
+        movbi   bc,12			; status length
         movbi   [ga].3h,10h
-        lcall   [ga],x0a60
+        lcall   [ga],x0a60		; do the transefer
         lcall   [ga],x1def
-        movbi   [gc].iopb+iopb_act_count,12
+        movbi   [gc].iopb+iopb_act_count,12	; status length
         dec     bc
         ljmp    x00c5
 
@@ -738,7 +739,7 @@ cmd_format:
         mov     [ga],[ga].0ah
         mov     [ga].2h,[ga].0ch
         mov     [ga].4h,[ga].0eh
-        andbi   [ga],0ffc0h
+        andbi   [ga],0c0h
         jnbt    [gc],0,x059c
         movb    [gc].52h,[ga].1h
         ljzb    [ga],x05e8
@@ -755,14 +756,14 @@ x05a3:  movb    bc,[ga]
         movb    [gc].54h,[gc].43h
         movb    gb,[gc].43h
         addb    [gc].54h,gb
-        addbi   gb,0fffch
+        addbi   gb,0fch
         movb    [ga].9h,gb
         movb    [ga].0ah,[gc].54h
         movi    gb,4010h
         movbi   ix,0h
 x05d8:  mov     [gb+ix+],[ga].1h
         mov     [gb+ix+],[ga].3h
-        addbi   bc,0fffch
+        addbi   bc,0fch
         jnz     bc,x05d8
 x05e8:  movb    ix,[ga].5h
         addbi   ga,0fh
@@ -774,7 +775,7 @@ x05e8:  movb    ix,[ga].5h
         ljbt    [gc],0,x0692
         ljz     bc,x068e
         lcall   [ga],x1984
-        addbi   ga,0fff1h
+        addbi   ga,0f1h
         movi    ix,0c6h
         mov     [gc].4ch,ga
         jmp     x0629
@@ -803,7 +804,7 @@ x0653:  jnz     bc,x0619
         jmp     x0619
 
 x0667:  jbt     [ga].9h,7,x0671
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         jmp     x068e
 
 x0671:  setb    [gc].30h,4
@@ -885,24 +886,24 @@ x076a:  movi    cc,cc_gb_mem_to_ga_mem
         movp    [ga],gb
         addbi   ga,9h
         lcall   [ga],x1337
-        addbi   ga,0fff7h
+        addbi   ga,0f7h
         jz      bc,x07b9
         addbi   ga,9h
         lcall   [ga],x0baa
         jnbt    [ga].3h,0,x0798
         lcall   [ga],x0bfc
-x0798:  addbi   ga,0fff7h
+x0798:  addbi   ga,0f7h
         jz      bc,x07b6
         mov     [ga].4h,bc
         addbi   ga,9h
         lcall   [ga],x1f05
-        addbi   ga,0fff7h
+        addbi   ga,0f7h
         jz      bc,x07b9
         mov     bc,[ga].4h
         movp    gb,[ga]
         jmp     x076a
 
-x07b6:  movbi   bc,0ffffh
+x07b6:  movbi   bc,0ffh
 x07b9:  ljmp    x00c5
 
 cmd_read_data:
@@ -917,7 +918,7 @@ cmd_read_data:
         movp    [ga],gb
         addbi   ga,9h
 x07de:  lcall   [ga],x1000
-        addbi   ga,0fff7h
+        addbi   ga,0f7h
         jz      bc,x081f
         movp    gb,[ga]
         mov     bc,[ga].4h
@@ -927,7 +928,7 @@ x07de:  lcall   [ga],x1000
         movbi   [ga].3h,2h
         lcall   [ga],x0a60
         lcall   [ga],x0baa
-        addbi   ga,0fff7h
+        addbi   ga,0f7h
         jz      bc,x081c
         mov     [ga].4h,bc
         movp    [ga],gb
@@ -936,7 +937,7 @@ x07de:  lcall   [ga],x1000
         jnz     bc,x07de
         jmp     x081f
 
-x081c:  movbi   bc,0ffffh
+x081c:  movbi   bc,0ffh
 x081f:  ljmp    x00c5
 
 cmd_read_id:
@@ -957,7 +958,7 @@ x0846:  lcall   [ga],x20ba
         lcall   [ga],x159e
         jz      bc,x0881
         movb    [gb].4h,[gb].1h
-        andbi   [gb].4h,0fff0h
+        andbi   [gb].4h,0f0h
         andbi   [gb].1h,0fh
         movbi   bc,5h
         movb    [gc].14h,bc
@@ -965,7 +966,7 @@ x0846:  lcall   [ga],x20ba
         lpd     gb,[gc].22h
         movbi   [ga].3h,2h
         lcall   [ga],x0a60
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
 x0881:  ljmp    x00c5
 
 cmd_diag:
@@ -1028,13 +1029,13 @@ x093a:  call    [ga],x0941
         ljmp    x00c5
 
 x0941:  addbi   ga,4h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         nop     
         nop     
         movi    gc,3ffeh
         mov     [ga],cc
         mov     [ga].2h,cc
-x0954:  addbi   gc,0fffeh
+x0954:  addbi   gc,0feh
         movb    gb,[gc]
         andi    gb,0ffh
         add     [ga],gb
@@ -1060,7 +1061,7 @@ x0954:  addbi   gc,0fffeh
 x0996:  movi    gc,var_base
         setb    [gc].2fh,4
         movbi   bc,0h
-x09a0:  addbi   ga,0fffch
+x09a0:  addbi   ga,0fch
         movi    gc,var_base
         mov     tp,[ga]
 
@@ -1084,7 +1085,7 @@ x09d6:  mov     [gb+ix+],ga
 x09df:  mov     bc,[gb+ix+]
         jnz     bc,x09f5
         jnz     ix,x09df
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         movi    ga,7f69h
         movi    [ga],0h
         jmp     x0a00
@@ -1098,7 +1099,7 @@ x0a00:  movbi   [ga].2h,0h
         movp    ga,[gc].4eh
         movp    [gc].2h,ga
         lpd     gb,[ga].2h
-        addbi   gb,0fffch
+        addbi   gb,0fch
         movp    [gc].6h,gb
         lpd     ga,[gb].8h
         movp    [gc].0ah,ga
@@ -1127,7 +1128,7 @@ x0a60:  mov     [gc].56h,cc
         wid     16,8
         jnbt    [gc].57h,2,x0a71
         wid     8,16
-x0a71:  movbi   [ga].8h,0ffffh
+x0a71:  movbi   [ga].8h,0ffh
         movb    [gc].vhw+wdc08,[gc].5h
         jnbt    [gc].iopb+iopb_modifier,4,x0af2	; 24-bit addressing
         clr     [ga].3h,7
@@ -1201,11 +1202,13 @@ x0b3e:  movi    ga,isbx_217_ch1		; tape data
 x0b49:  movi    ga,7f69h
 x0b4d:  lpd     gb,[gc].22h
 x0b50:  mov     [gc].4eh,ga
-        dec     bc
-        jz      bc,x0b94
-        inc     bc
+
+        dec     bc			; is the transfer length just 1 byte?
+        jz      bc,x0b94		; yes, special-case it w/ programmed IO
+        inc     bc			; no, use DMA
         xfer    
         nop     
+
 x0b5e:  mov     ga,[gc].0eh
         jnbt    [gc],2,x0b67
         jnz     bc,x0b92
@@ -1298,13 +1301,13 @@ x0c53:  jz      bc,x0c8c
         addbi   ga,2h
 x0c5b:  lcall   [ga],x1337
         jz      bc,x0c90
-        addbi   ga,0fffeh
+        addbi   ga,0feh
         mov     bc,[ga]
         lcall   [ga],x0be4
         lcall   [ga],x0baa
         jnbt    [ga].3h,0,x0c77
         lcall   [ga],x0bfc
-x0c77:  addbi   ga,0fffeh
+x0c77:  addbi   ga,0feh
         jz      bc,x0c8c
         mov     [ga],bc
         addbi   ga,2h
@@ -1326,7 +1329,7 @@ cmd_read_verify:
         addbi   ga,2h
 x0caf:  lcall   [ga],x1000
         jz      bc,x0cd8
-        addbi   ga,0fffeh
+        addbi   ga,0feh
         mov     bc,[ga]
         lcall   [ga],x0be4
         lcall   [ga],x0baa
@@ -1337,7 +1340,7 @@ x0caf:  lcall   [ga],x1000
         jz      bc,x0cd8
         jmp     x0caf
 
-x0cd5:  movbi   bc,0ffffh
+x0cd5:  movbi   bc,0ffh
 x0cd8:  ljmp    x00c5
 
 cmd_isbx_exec:
@@ -1393,7 +1396,7 @@ x0d52:  mov     cc,[ga].6h
         add     bc,[gc].26h
         mov     [gc].14h,bc
 x0d6b:  movi    [gc].16h,0h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         ljmp    x00c5
 
 x0d77:  mov     [gc].14h,[gc].26h
@@ -1432,7 +1435,7 @@ x1007:  movbi   mc,0h
         wid     16,16
         movi    cc,cc_ga_port_to_gb_mem_extt
         movb    [ga].0dh,mc
-        movbi   bc,0fff1h
+        movbi   bc,0f1h
         addb    bc,[gc].0b8h
         jnz     bc,x102f
         mov     [gc].0c8h,[gc].5eh
@@ -1488,7 +1491,7 @@ x10b3:  mov     ix,[ga].3h
         setb    [gc].31h,6
         addbi   ga,12h
         lcall   [ga],x1e20
-        addbi   ga,0ffeeh
+        addbi   ga,0eeh
         decb    [gc].0bdh
         ljzb    [gc].0bdh,x1419
         ljnz    bc,x1007
@@ -1509,13 +1512,13 @@ x1103:  setb    [gc].30h,0
 
 x110a:  addbi   ga,12h
         lcall   [ga],x1e57
-        addbi   ga,0ffeeh
+        addbi   ga,0eeh
         ljnz    bc,x1007
         ljmp    x13ce
 
 x111c:  movbi   [ga].0ch,0h
 x1120:  movbi   [ga].0bh,0h
-        movbi   mc,0ffffh
+        movbi   mc,0ffh
         movb    [ga].0dh,[gc].43h
         movbi   [gc].3ah,0h
         lcall   [ga].12h,x1252
@@ -1542,7 +1545,7 @@ x1163:  incb    [ga].0bh
 x1177:  movb    [ga].0ch,[ga].0bh
         lcall   [ga].12h,x1252
 x1182:  jzb     [ga].0ch,x11a0
-        movbi   mc,0ffffh
+        movbi   mc,0ffh
         jnzb    [gc].0b9h,x1195
         lcall   [ga].12h,x1698
         jmp     x119a
@@ -1560,7 +1563,7 @@ x11af:  lcall   [ga].12h,x1646
 x11b4:  addbi   ga,12h
         lcall   [ga],x2daf
         jz      bc,x11e5
-        addbi   ga,0ffeeh
+        addbi   ga,0eeh
         not     bc,[gc].3eh
         inc     bc
         add     bc,[gb]
@@ -1575,7 +1578,7 @@ x11d6:  setb    [gc].31h,4
         ljmp    x1441
 
 x11e5:  lcall   [ga],x1a77
-        addbi   ga,0ffeeh
+        addbi   ga,0eeh
         jnz     bc,x1177
 x11ef:  movb    [ga].0ch,[ga].0bh
         incb    [ga].0ch
@@ -1597,14 +1600,14 @@ x120c:  setb    [gc].31h,3
         jnz     bc,x1232
         addbi   ga,12h
         lcall   [ga],x2db9
-        addbi   ga,0ffeeh
+        addbi   ga,0eeh
         ljnz    bc,x1441
 x1232:  mov     [ga].7h,[gb]
         mov     [ga].9h,[gb].2h
         movi    gb,4008h
         addbi   ga,12h
         lcall   [ga],x1a77
-        addbi   ga,0ffeeh
+        addbi   ga,0eeh
         ljz     bc,x13ce
 x124f:  mov     tp,[ga].0fh
 
@@ -1654,7 +1657,7 @@ x12d7:  movi    gb,isbx_218a_ch0
         orb     bc,[gc].3ch
         movb    [gb].fdc_data,bc
         movi    mc,0ff90h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         movi    [ga].3h,702h
 x12ed:  movb    ix,[gc].3dh
         decb    [ga].4h
@@ -1673,10 +1676,10 @@ x1310:  movb    [gb].2h,ix
         jnzb    [ga].4h,x12ed
         movi    gc,var_base
         mov     [gc].4ch,ga
-        movbi   [gc].4eh,0ffffh
+        movbi   [gc].4eh,0ffh
         not     ix,[gc].46h
         jnzb    [gc].42h,x1335
-        movbi   [gc].4eh,0ff80h
+        movbi   [gc].4eh,080h
 x132d:  jmce    [gb],x1335	; FDC status
         dec     bc
         jnz     bc,x132d
@@ -1692,7 +1695,7 @@ x1344:  movi    ix,0c6h
         addb    mc,[gc].43h
         inc     mc
         movb    [ga].7h,mc
-        movbi   bc,0fff1h
+        movbi   bc,0f1h
         addb    bc,[gc].0b8h
         jnz     bc,x1365
         mov     [gc].0c8h,[gc].5eh
@@ -1743,7 +1746,7 @@ x13e5:  andi    bc,0fffh
         setb    [gc].31h,6
         addbi   ga,10h
         lcall   [ga],x1e20
-        addbi   ga,0fff0h
+        addbi   ga,0f0h
         decb    [gc].0bdh
         jzb     [gc].0bdh,x1419
         ljnz    bc,x1344
@@ -1760,14 +1763,14 @@ x141f:  mov     ix,[ga].3h
         lcall   [ga],x1a03
         lcall   [ga],x1e57
         lcall   [ga],x1984
-        addbi   ga,0fff0h
+        addbi   ga,0f0h
         ljnz    bc,x1344
         jmp     x13ce
 
-x143b:  movbi   bc,0ffffh
+x143b:  movbi   bc,0ffh
         jmp     x13d1
 
-x1441:  movbi   bc,0ffffh
+x1441:  movbi   bc,0ffh
         jmp     x13d1
 
 x1447:  addbi   ga,7h
@@ -1805,7 +1808,7 @@ x14a9:  movi    gc,var_base
         movbi   [gc].vhw+wdc18,2h
         mov     ga,[gc].4ch
         lcall   [ga],x14df
-x14b8:  addbi   ga,0fff9h
+x14b8:  addbi   ga,0f9h
         ljmp    x13d1
 
 x14bf:  movbi   cc,1h
@@ -1885,7 +1888,7 @@ x159e:  addbi   ga,4h
         jbt     [gc],0,x15ff
         wid     16,16
         movi    cc,cc_ga_port_to_gb_mem_extt
-        movbi   mc,0fff1h
+        movbi   mc,0f1h
         addb    mc,[gc].0b8h
         jnz     mc,x15bd
         mov     [gc].0c8h,[gc].5eh
@@ -1901,13 +1904,13 @@ x15d4:  jnz     [gb].4h,x15f0
         mov     [gb].8h,[gb]
         mov     [gb].0ah,[gb].2h
         addbi   gb,8h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         jmp     x15fa
 
 x15f0:  lcall   [ga],x1a77
         setb    [gc].31h,4
         jnz     bc,x15c3
-x15fa:  addbi   ga,0fffch
+x15fa:  addbi   ga,0fch
         mov     tp,[ga]
 
 x15ff:  movi    gb,7fdeh
@@ -1941,7 +1944,7 @@ x164a:  mov     [gc].vhw+wdc30,[gc].3eh
         movi    bc,410h
         xfer    
         nop     
-x1674:  movbi   bc,0ffffh
+x1674:  movbi   bc,0ffh
 x1677:  mov     ga,[gc].4ch
         movi    gb,4008h
         mov     tp,[ga].12h
@@ -1971,7 +1974,7 @@ x16ae:  mov     [gc].vhw+wdc30,[gc].3eh
         movi    bc,410h
         xfer    
         nop     
-x16ce:  movbi   bc,0ffffh
+x16ce:  movbi   bc,0ffh
 x16d1:  mov     ga,[gc].4ch
         movi    gb,4008h
         movb    mc,[gc].4fh
@@ -1984,7 +1987,7 @@ x16e4:  jnbt    [gc].vhw+rdc00,s00_data_sync,x16de
 x16e8:  movi    gc,var_base
         jnzb    [gc].4eh,x16de
         movbi   bc,8h
-        addbi   gb,0fff8h
+        addbi   gb,0f8h
         mov     [gc].vhw+wdc08,mc
         incb    [gc].4eh
         jnzb    [gc].4fh,x16ae
@@ -2015,7 +2018,7 @@ x1724:  movi    gb,4008h
         movi    cc,cc_gb_mem_to_ga_port_extt
         xfer    
         nop     
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
 x1757:  mov     ga,[gc].4ch
         movi    gb,4008h
         mov     tp,[ga].10h
@@ -2025,7 +2028,7 @@ x1761:  addbi   ga,3h
         jnbt    [gc].52h,3,x1772
         setb    [gc].30h,7
         movbi   bc,0h
-x1772:  addbi   ga,0fffdh
+x1772:  addbi   ga,0fdh
         mov     tp,[ga]
 
         jmp     x177a
@@ -2043,7 +2046,7 @@ x1795:  movi    [gc].vhw+dc_data,0a1d9h
         movi    cc,cc_gb_mem_to_ga_port_extt
         xfer    
         nop     
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
 x17af:  mov     ga,[gc].4ch
         movi    gb,4008h
         mov     tp,[ga].10h
@@ -2051,7 +2054,7 @@ x17af:  mov     ga,[gc].4ch
 x17b9:  jnbt    [gc].vhw+rdc00,s00_data_sync,x17d0
         jnzb    [gc].4eh,x17d0
         addbi   bc,8h
-        addbi   gb,0fff8h
+        addbi   gb,0f8h
         mov     [gc].vhw+wdc08,mc
         incb    [gc].4eh
         jmp     x1795
@@ -2069,7 +2072,7 @@ x17d6:  mov     [gc].4ch,ga
         jbt     [gc].vhw+rdc08,s08_vendor,x180c
         movb    [gc].vhw+counter_0,cc
         movb    [gc].vhw+counter_0,cc
-        movbi   gb,0fff1h
+        movbi   gb,0f1h
         addb    gb,[gc].0b8h
         jnz     gb,x1843
         mov     [gc].0c8h,[gc].5eh
@@ -2153,7 +2156,7 @@ x1909:  clr     [gc].wdc18_shadow,6
         jnbt    [gc].vhw+rdc08,s08_vendor,x1916
         movb    [gc].vhw+wdc18,[gc].wdc18_shadow
 x1916:  clr     [gc].wdc18_shadow,7
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         mov     [gc].vhw+wdc08,mc
 x191f:  jnbt    [gc].0c7h,7,x191f
 x1923:  movb    [gc].vhw+wdc18,[gc].wdc18_shadow
@@ -2332,36 +2335,36 @@ x1a77:  addbi   ga,5h
         jnzb    [gc].3ah,x1a8b
         mov     [gc].58h,bc
         mov     [gc].56h,bc
-x1a8b:  movbi   bc,0fffdh
+x1a8b:  movbi   bc,0fdh
         jzb     [gc].0b7h,x1aa6
 x1a92:  addb    bc,[gc].3ah
         jz      bc,x1aa1
-x1a98:  movbi   bc,0ffffh
+x1a98:  movbi   bc,0ffh
         incb    [gc].3ah
         incb    [gc].56h
-x1aa1:  addbi   ga,0fffbh
+x1aa1:  addbi   ga,0fbh
         mov     tp,[ga]
 
 x1aa6:  jnbt    [gc].1h,5,x1ab1
         jnbt    [gc].1h,6,x1ab8
         jmp     x1a92
 
-x1ab1:  movbi   bc,0fff7h
+x1ab1:  movbi   bc,0f7h
         jbt     [gc].1h,6,x1abb
-x1ab8:  movbi   bc,0ffe5h
+x1ab8:  movbi   bc,0e5h
 x1abb:  addb    bc,[gc].3ah
         jz      bc,x1aa1
-        movbi   bc,0fffdh
+        movbi   bc,0fdh
         addb    bc,[gc].56h
         jnz     bc,x1aeb
         movb    [gc].56h,bc
         incb    [gc].58h
-        movbi   bc,0fffdh
+        movbi   bc,0fdh
         addb    bc,[gc].58h
         jnz     bc,x1aeb
         movb    [gc].58h,bc
         incb    [gc].59h
-        movbi   bc,0fffdh
+        movbi   bc,0fdh
         addb    bc,[gc].59h
         jnz     bc,x1aeb
         jmp     x1aa1
@@ -2472,7 +2475,7 @@ x1dcb:  dec     [gc].4ah
         addb    gb,[ga]
         movb    mc,[gb]
         orb     [gc].3fh,mc
-x1dea:  addbi   ga,0fffah
+x1dea:  addbi   ga,0fah
         mov     tp,[ga]
 
 x1def:  movbi   cc,0h
@@ -2490,7 +2493,7 @@ x1e07:  addbi   ga,8h
         lcall   [ga],x2cd2
         jnz     bc,x1e1b
 x1e18:  call    [ga],x1e20
-x1e1b:  addbi   ga,0fff8h
+x1e1b:  addbi   ga,0f8h
         mov     tp,[ga]
 
 x1e20:  addbi   ga,8h
@@ -2508,7 +2511,7 @@ x1e46:  dec     cc
         jnz     cc,x1e2e
 x1e4b:  lcall   [ga],x2bc3
         movbi   bc,0h
-x1e52:  addbi   ga,0fff8h
+x1e52:  addbi   ga,0f8h
         mov     tp,[ga]
 
 x1e57:  mov     [ga].8h,ix
@@ -2549,7 +2552,7 @@ x1ea5:  movi    gb,4000h
         not     mc,[gc].4ah
         add     [gb],mc
         jnbt    [gb].1h,7,x1eee
-        movbi   [gc].45h,0ffffh
+        movbi   [gc].45h,0ffh
         movb    mc,[gc].40h
         lcall   [ga],x21d8
         jz      bc,x1efd
@@ -2563,7 +2566,7 @@ x1ef1:  setb    [gc].2fh,6
 
 x1ef7:  setb    [gc].30h,4
 x1efa:  movbi   bc,0h
-x1efd:  addbi   ga,0fff6h
+x1efd:  addbi   ga,0f6h
         mov     ix,[ga].8h
         mov     tp,[ga]
 
@@ -2610,7 +2613,7 @@ x1f61:  movbi   mc,0h
 
 x1f88:  mov     mc,[gc].32h
         lcall   [ga],x1e07
-x1f8f:  addbi   ga,0fff6h
+x1f8f:  addbi   ga,0f6h
         mov     tp,[ga]
 
 x1f94:  movb    [ga].3h,[gc].43h
@@ -2681,7 +2684,7 @@ x2046:  inc     bc
 x2048:  mov     [ga].4h,mc
         jbt     [ga].5h,7,x2059
         add     [ga].4h,bc
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         jbt     [ga].5h,7,x205c
 x2059:  movbi   bc,0h
 x205c:  mov     tp,[ga]
@@ -2729,12 +2732,12 @@ x20ba:  movb    [gc].0b4h,ix
         movi    gb,x21d4
         movb    [gc].vhw+wdc18,[gb+ix]
         movb    [gc].wdc18_shadow,[gb+ix]
-x20d3:  movbi   bc,0ffffh
+x20d3:  movbi   bc,0ffh
 x20d6:  mov     tp,[ga]
 
 x20d8:  movbi   bc,0h
         jbt     [gc].0dh,6,x20ec
-        movbi   ix,0fff8h
+        movbi   ix,0f8h
 x20e2:  movi    [gc+ix+],0h
         jnz     ix,x20e2
         movb    ix,[gc].0b4h
@@ -2744,7 +2747,7 @@ x20ec:  jbt     [gc].vhw+rdc08,s08_isbx_218a_present,x20d6
         jmp     x20d3
 
 x20fa:  movbi   [gc].51h,0h
-x20fe:  movbi   bc,0ffffh
+x20fe:  movbi   bc,0ffh
         movbi   ix,0h
         addbi   ga,5h
 x2107:  movb    [gc].50h,ix
@@ -2783,13 +2786,13 @@ x2183:  movb    ix,[gc].0b4h
         jnbt    [gc].51h,0,x2193
         movi    [gc].2fh,0h
         movbi   [gc].31h,0h
-x2193:  addbi   ga,0fffbh
+x2193:  addbi   ga,0fbh
         jbt     [gc].51h,5,x219d
         movbi   bc,0h
 x219d:  mov     tp,[ga]
 
 x219f:  andbi   [gc].51h,3fh
-        addbi   [gc].50h,0fffdh
+        addbi   [gc].50h,0fdh
         jnzb    [gc].50h,x21b5
         setb    [gc].51h,2
         movb    ix,[gc].0b4h
@@ -2817,7 +2820,7 @@ x21d4:  db      0h
         db      18h
 
 x21d8:  addbi   ga,5h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         jbt     [gc],0,x2202
         movi    gb,x21ea
         addb    gb,[gc].0b7h
@@ -2831,7 +2834,7 @@ x21ea:  dw      x21f2
 x21f2:  movbi   [ga],44h
         movb    [ga].1h,mc
         lcall   [ga].2h,x2235
-x21fd:  addbi   ga,0fffbh
+x21fd:  addbi   ga,0fbh
         mov     tp,[ga]
 
 x2202:  clr     [gc].3dh,2
@@ -2861,8 +2864,8 @@ x2235:  movi    [gc].5ch,0h
 
 x2244:  setb    [gc].5ch,1
 x2247:  mov     [ga].4h,[ga]
-        movbi   bc,0ffffh
-        movbi   gb,0ffc0h
+        movbi   bc,0ffh
+        movbi   gb,0c0h
         addb    gb,[ga]
         jnz     gb,x225a
         setb    [gc].5ch,6
@@ -2883,7 +2886,7 @@ x2275:  movi    [gc].0c8h,40h
         ljbt    [gc].5dh,0,x2385
         addbi   ga,7h
         lcall   [ga],x272a
-        addbi   ga,0fff9h
+        addbi   ga,0f9h
         ljbt    [gc].5ch,7,x238c
         setb    [gc].5ch,7
         jbt     [gc].5ch,0,x22b7
@@ -2891,16 +2894,16 @@ x2275:  movi    [gc].0c8h,40h
         jbt     [gc].5ch,4,x22b7
         ljz     bc,x2385
         setb    [gc].5dh,0
-x22b7:  andbi   [gc].5ch,0ffc8h
+x22b7:  andbi   [gc].5ch,0c8h
         jmp     x225a
 
 x22be:  movbi   [gc].vhw+wdc18,1h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         movb    [ga],[ga].4h
         movi    [gc].0c8h,48h
         movbi   [ga].1h,0h
         mov     [gc].vhw+wdc10,[ga]
-        addbi   [ga],0ffc0h
+        addbi   [ga],0c0h
         movi    [gc].0c8h,248h
 x22e0:  jnbt    [gc].vhw+rdc08,s08_write_protected,x22ec
         dec     bc
@@ -2952,7 +2955,7 @@ x2373:  dec     bc
 
 x237c:  jbt     [gc].5ch,1,x2385
         ljbt    [gc].5ch,2,x2275
-x2385:  andbi   [gc].5ch,0fff9h
+x2385:  andbi   [gc].5ch,0f9h
         mov     tp,[ga].2h
 
 x238c:  movbi   bc,0h
@@ -2967,8 +2970,8 @@ x2392:  addbi   ga,5h
         clr     [gc].wdc18_shadow,0
         movb    [gc].vhw+wdc18,[gc].wdc18_shadow
         movi    [gc].0c8h,1c0h
-        movbi   bc,0ffffh
-x23bb:  addbi   ga,0fffbh
+        movbi   bc,0ffh
+x23bb:  addbi   ga,0fbh
         mov     tp,[ga]
 
 x23c0:  addbi   ga,5h
@@ -2986,11 +2989,11 @@ x23e9:  jnbt    [gc].vhw+rdc30,4,x23f0
 x23f0:  jnbt    [gc].vhw+rdc30,5,x23f7
         setb    [gc].0b8h,3
 x23f7:  movb    bc,[gc].0b8h
-        addbi   bc,0fff2h
+        addbi   bc,0f2h
         movb    [gc].0b9h,bc
         addbi   bc,3h
         movb    [gc].0bah,bc
-        addbi   bc,0fffeh
+        addbi   bc,0feh
         movb    [gc].0b7h,bc
         jnzb    [gc].0bah,x241f
         movp    gb,[gc].iopb_ptr
@@ -3090,13 +3093,13 @@ x2545:  movbi   [ga],16h
         lcall   [ga],x28d8
         jz      bc,x255f
 x255b:  lcall   [ga],x2700
-x255f:  addbi   ga,0fffbh
+x255f:  addbi   ga,0fbh
         mov     tp,[ga]
 
 x2564:  jnz     ix,x255b
         mov     gb,[gc].54h
         mov     [ga],[gb]
-        movbi   bc,0fffeh
+        movbi   bc,0feh
         movbi   mc,0h
 x2574:  add     [ga],bc
         dec     mc
@@ -3125,7 +3128,7 @@ x2593:  movi    [gc].vhw+wdc10,0feh
         jz      bc,x255f
         movbi   mc,12h
 x25a2:  lcall   [ga],x28b5
-        addbi   [ga].2h,0fff5h
+        addbi   [ga].2h,0f5h
         jzb     [ga].2h,x255b
         dec     bc
         jnz     bc,x25a2
@@ -3155,7 +3158,7 @@ x25e5:  movi    [ga],55h
 
 x2700:  mov     [ga].3h,mc
         addbi   ga,9h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         movbi   [gc].52h,0h
         ljbt    [gc],0,x28fb
         movi    gb,x271a
@@ -3227,7 +3230,7 @@ x27d5:  setb    [gc].52h,6
         addbi   ga,5h
         movbi   [ga],0eh
         lcall   [ga].2h,x2244
-        addbi   ga,0fffbh
+        addbi   ga,0fbh
         jz      bc,x282a
         jzb     [ga].5h,x279f
         setb    [gc].52h,6
@@ -3248,13 +3251,13 @@ x2812:  addbi   ga,5h
         lcall   [ga].2h,x2244
         jnbt    [ga],6,x2823
         setb    [gc].52h,3
-x2823:  addbi   ga,0fffbh
+x2823:  addbi   ga,0fbh
         ljnz    bc,x27a2
 x282a:  movbi   bc,0h
 x282d:  jnbt    [gc].52h,6,x2838
         jbt     [gc].52h,2,x2838
         movbi   bc,0h
-x2838:  addbi   ga,0fff7h
+x2838:  addbi   ga,0f7h
         mov     mc,[ga].3h
         mov     tp,[ga]
 
@@ -3271,12 +3274,12 @@ x2861:  setb    [gc].30h,6
         movbi   bc,0h
         ljmp    x282d
 
-x286b:  movbi   bc,0ffffh
+x286b:  movbi   bc,0ffh
         ljmp    x282d
 
 x2872:  call    [ga],x289b
         jz      bc,x2861
-        andbi   [ga].5h,0ffa4h
+        andbi   [ga].5h,0a4h
         jzb     [ga].5h,x2854
         setb    [gc].31h,5
         setb    [gc].52h,6
@@ -3288,13 +3291,13 @@ x2872:  call    [ga],x289b
         jmp     x2854
 
 x289b:  addbi   ga,3h
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
 x28a1:  call    [ga],x28b5
         jnbt    [ga].2h,4,x28b0
         dec     bc
         jnz     bc,x28a1
         setb    [gc].31h,5
-x28b0:  addbi   ga,0fffdh
+x28b0:  addbi   ga,0fdh
         mov     tp,[ga]
 
 x28b5:  movbi   [gc].52h,0h
@@ -3315,7 +3318,7 @@ x28de:  jnbt    [gc].0c7h,6,x28f4
         decb    [ga]
         jnzb    [ga],x28de
         setb    [gc].31h,5
-x28ef:  addbi   ga,0fffbh
+x28ef:  addbi   ga,0fbh
         mov     tp,[ga]
 
 x28f4:  lcall   [ga],x2700
@@ -3338,7 +3341,7 @@ x2928:  movi    [gc].18h,0f704h
 x292d:  movi    gc,var_base
         addbi   ga,19h
         lcall   [ga],x29af
-        addbi   ga,0ffe7h
+        addbi   ga,0e7h
         ljz     bc,x2838
         movbi   [gb].2h,4h
         movi    mc,0f090h
@@ -3373,7 +3376,7 @@ x29a9:  jmcne   [gb],x29a9
 
 x29af:  addbi   ga,3h
         lcall   [ga].19h,x2971
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
 x29ba:  movi    mc,0f080h
         lcall   [ga].19h,x299e
         movbi   [gb].2h,8h
@@ -3382,11 +3385,11 @@ x29ba:  movi    mc,0f080h
         movb    [ga],[gb].2h
         movb    [ga].1h,[ga]
         movb    [ga].19h,[ga]
-        addbi   [ga].19h,0ff80h
+        addbi   [ga].19h,080h
         jzb     [ga].19h,x2a3c
         movb    [ga].2h,[ga]
         andbi   [ga].2h,3h
-        andbi   [ga].1h,0ffc0h
+        andbi   [ga].1h,0c0h
         jzb     [ga].1h,x2a10
         orbi    [ga].1h,3fh
         incb    [ga].1h
@@ -3415,7 +3418,7 @@ x2a3c:  jnbt    [gb],6,x2a42		; FDC status
         movb    mc,[gb].2h
 x2a42:  ljzb    [ga].1h,x29ba
         movb    mc,[ga].3h
-        addbi   ga,0fffdh
+        addbi   ga,0fdh
         mov     tp,[ga]
 
 x2a4f:  movi    gb,7fdeh
@@ -3470,7 +3473,7 @@ x2ac0:  movb    [ga].1h,[gc].56h
         jz      bc,x2ae9
         movbi   [ga],3h
         lcall   [ga].2h,x2235
-x2ae9:  addbi   ga,0fff9h
+x2ae9:  addbi   ga,0f9h
 x2aec:  mov     ix,[gc].58h
         mov     mc,[gc].56h
         mov     tp,[ga]
@@ -3501,10 +3504,10 @@ x2b49:  clr     [gc].1h,0
         mov     bc,[gc].56h
         add     bc,[gc].5ch
         mov     [ga],bc
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         jbt     [ga].1h,7,x2b5e
         setb    [gc].1h,0
-x2b5e:  addbi   ga,0fff9h
+x2b5e:  addbi   ga,0f9h
         mov     [ga].5h,mc
         jnbt    [ga].6h,7,x2b73
         movi    gb,0c0h
@@ -3517,7 +3520,7 @@ x2b77:  mov     [gc].0c8h,gb
         movb    gb,[gc].wdc18_shadow
 x2b7d:  orbi    gb,1h
         movb    [gc].vhw+wdc18,gb
-        andbi   gb,0fffeh
+        andbi   gb,0feh
         movb    [gc].vhw+wdc18,gb
         nop     
         nop     
@@ -3569,7 +3572,7 @@ x2c17:  lcall   [ga],x2700
         jnbt    [gc].0bfh,7,x2c22
         movbi   bc,0h
 x2c22:  clr     [gc].5fh,7
-        addbi   ga,0fffbh
+        addbi   ga,0fbh
         mov     mc,[ga].3h
         mov     ix,[gc].58h
         mov     tp,[ga]
@@ -3578,7 +3581,7 @@ x2c30:  movi    [gc].vhw+wdc10,0fch
         lcall   [ga],x2392
         jz      bc,x2c11
 x2c3c:  lcall   [ga],x28b5
-        addbi   [ga].2h,0fff5h
+        addbi   [ga].2h,0f5h
         jzb     [ga].2h,x2c22
         dec     bc
         jnz     bc,x2c3c
@@ -3624,7 +3627,7 @@ x2cc4:  decb    [gc].0bfh
         jmp     x2c79
 
 x2cd2:  mov     [ga].3h,mc
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
         movbi   [gc].0bfh,0eh
         addbi   ga,5h
         ljbt    [gc],0,x2d7e
@@ -3650,7 +3653,7 @@ x2d0b:  setb    [gc].31h,7
 x2d11:  lcall   [ga],x2700
         jnbt    [gc].0bfh,7,x2d1c
         movbi   bc,0h
-x2d1c:  addbi   ga,0fffbh
+x2d1c:  addbi   ga,0fbh
         mov     mc,[ga].3h
         mov     tp,[ga]
 
@@ -3659,7 +3662,7 @@ x2d28:  lcall   [ga],x28b5
         jbt     [ga].2h,4,x2d43
         lcall   [ga],x28b5
         movb    [ga],[ga].2h
-        andbi   [ga],0ffa4h
+        andbi   [ga],0a4h
         jnzb    [ga],x2d0b
         jbt     [ga].2h,1,x2d1c
 x2d43:  dec     bc
@@ -3676,7 +3679,7 @@ x2d52:  jnbt    [gc].vhw+rdc00,s00_seek_complete,x2d65
         jmp     x2d0b
 
 x2d65:  jbt     [gc].5fh,7,x2d1c
-        movbi   mc,0fff3h
+        movbi   mc,0f3h
         addb    mc,[gc].0b8h
         jnz     mc,x2d7b
         movi    gb,163ah
@@ -3704,7 +3707,7 @@ x2daf:  movbi   [gc].53h,0h
         movbi   bc,4h
         jmp     x2dc0
 
-x2db9:  movbi   [gc].53h,0ffffh
+x2db9:  movbi   [gc].53h,0ffh
         mov     bc,[gc].46h
 x2dc0:  mov     [gc].0eh,ga
         mov     [ga].3h,gb
@@ -3720,7 +3723,7 @@ x2dde:  mov     [gc].50h,[gb]
         movbi   [gc].52h,0h
 x2ded:  dec     bc
         mov     gb,[gc].50h
-        andbi   gb,0fffch
+        andbi   gb,0fch
         jnz     gb,x2e2f
         mov     mc,[gc].4eh
         jbt     [gc].50h,1,x2e29
@@ -3781,7 +3784,7 @@ x2e91:  not     mc,[gc].50h
         and     gb,[gc].4eh
         mov     [ga+ix],mc
         or      [ga+ix],gb
-        movbi   bc,0ffffh
+        movbi   bc,0ffh
 x2eb0:  mov     ga,[gc].0eh
         mov     gb,[ga].3h
         mov     ix,[ga].5h
@@ -3793,18 +3796,18 @@ chan2_prog_start:
         movi    cc,100h
         movi    gc,var_base
         movbi   [gc].53h,0h
-        movbi   [gc].3bh,0ffffh
+        movbi   [gc].3bh,0ffh
 x2f50:  movi    gc,var_base
         movi    ga,7e64h
-        movbi   ix,0ffffh
+        movbi   ix,0ffh
         jnbt    [gc].53h,1,x2f63
-        movbi   [gc].53h,0ffffh
+        movbi   [gc].53h,0ffh
 x2f63:  incb    [gc].53h
         movbi   [gc],0h
 x2f69:  movi    gc,var_base
         mov     [gc].vhw+wdc38,ix
         jnzb    [gc].0dh,x2f7a
-        movbi   [gc].0dh,0ffabh
+        movbi   [gc].0dh,0abh
         hlt     
 x2f7a:  movbi   cc,0h
         movi    gb,7fdah
@@ -3814,7 +3817,7 @@ x2f7a:  movbi   cc,0h
         addbi   gb,4h
 x2f8f:  inc     ix
         mov     [gc].0eh,gb
-        movbi   [ga],0fffch
+        movbi   [ga],0fch
         addb    [ga],ix
         movi    cc,100h
         jzb     [ga],x2f50
@@ -3870,7 +3873,7 @@ x3035:  setb    [gb+ix],5
         lcall   [ga].14h,x0248
         mov     tp,[ga]
 
-x303e:  movbi   bc,0fff1h
+x303e:  movbi   bc,0f1h
         addb    bc,[gc].0b8h
         jz      bc,x306b
         ljbt    [gc].vhw+rdc00,s00_seek_complete,x2f69
@@ -3889,7 +3892,7 @@ x306b:  lcall   [ga],x28b5
         ljbt    [ga].2h,4,x2f69
         lcall   [ga],x28b5
         movb    [ga],[ga].2h
-        andbi   [ga],0ffa4h
+        andbi   [ga],0a4h
         jnzb    [ga],x305b
         ljnbt   [ga].2h,1,x2f69
         jmp     x305b
@@ -3908,7 +3911,7 @@ x30a6:  movi    cc,100h
         addi    gb,8h
         movi    gc,7f00h
         inc     ix
-        movbi   [ga],0fffch
+        movbi   [ga],0fch
         addb    [ga],ix
         jnzb    [ga],x30cd
         movi    [gc].0efh,0h
@@ -3956,12 +3959,12 @@ x313c:  movi    gb,7fe2h
 x3150:  clr     [gb+ix],1
         ljmp    x2f69
 
-x3156:  orbi    mc,0ffc0h
+x3156:  orbi    mc,0c0h
 x3159:  ori     mc,0fh
 x315d:  ori     mc,0eh
         lcall   [ga],x372c
         movbi   [gc].vhw+wdc30,0h
-        andbi   [gc].16h,0ff9bh
+        andbi   [gc].16h,09bh
         movi    gc,var_base
         setb    [gc],2
         lcall   [ga],x3035
@@ -4095,7 +4098,7 @@ cmd_tape_rw_terminate:
         lcall   [ga],x3528
         jbt     [gc].vhw+rdc30,1,x3365
         jbt     [gc].vhw+rdc30,2,x336c
-        movbi   [gb].tc_cmd_func,0ff82h
+        movbi   [gb].tc_cmd_func,082h
         lcall   [ga],x3528
         jbt     [gc].vhw+rdc30,1,x3365
         jbt     [gc].vhw+rdc30,2,x336c
@@ -4115,7 +4118,7 @@ cmd_tape_rw_terminate:
         jmp     x336c
 
 x3365:  setb    [gc].1h,2
-        movbi   [gc].0ch,0ffc9h
+        movbi   [gc].0ch,0c9h
 x336c:  ljmp    x3792
 
 x3370:  addbi   ga,3h
@@ -4163,7 +4166,7 @@ x33e5:  movb    [gb].2h,[gc].17h
         jmp     x342b
 
 x3414:  movi    gb,isbx_217_ch0
-        movbi   [gb].tc_cmd_func,0ff82h
+        movbi   [gb].tc_cmd_func,082h
         lcall   [ga],x3528
         movb    [gb],ix			; tc_cmd_param
         lcall   [ga],x3528
@@ -4197,7 +4200,7 @@ x3479:  jnz     [gc].62h,x349d
         movbi   [gb],20h		; tc_cmd_param
 x3488:  jnbt    [gb].tc_upi_status,0,x3488
         movb    [ga],[gb]		; tc_drive_status
-x3490:  movbi   [gb].tc_cmd_func,0ff81h
+x3490:  movbi   [gb].tc_cmd_func,081h
         lcall   [ga],x3528
         movb    [gb],ix
         jmp     x34bd
@@ -4212,12 +4215,12 @@ x34a3:  setb    [gc].1h,0
 x34ad:  setb    [gc],6
         jmp     x34b6
 
-x34b2:  andbi   [gc].16h,0ffdbh
-x34b6:  orbi    [gc].0ch,0ffc9h
+x34b2:  andbi   [gc].16h,0dbh
+x34b6:  orbi    [gc].0ch,0c9h
         setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
 x34bd:  jnbt    [gc].vhw+rdc30,0,x34c7
         mov     [gc].60h,[gc].0f9h
-x34c7:  addbi   ga,0fffdh
+x34c7:  addbi   ga,0fdh
         mov     tp,[ga]
 
 x34cc:  addbi   ga,3h
@@ -4237,7 +4240,7 @@ x34e8:  mov     [ga].5h,bc
         mov     bc,[ga].5h
         call    [ga],x3503
 x34f8:  mov     [gc].0f9h,[ga].3h
-        addbi   ga,0fffdh
+        addbi   ga,0fdh
         mov     tp,[ga]
 
 x3503:  mov     mc,[gc].0f9h
@@ -4278,10 +4281,10 @@ x355d:  addi    ga,3h
         call    [ga],x3586
         jnbt    [gc].16h,5,x357c
         jbt     [gc].vhw+rdc30,7,x357c
-        andbi   [gc].16h,0ffdbh
+        andbi   [gc].16h,0dbh
         jnzb    [gc].5h,x3578
         jzb     [gc].8h,x357c
-x3578:  orbi    [gc].0ch,0ff80h
+x3578:  orbi    [gc].0ch,080h
 x357c:  andbi   [gc].vhw+wdc30,7dh	; XXX clr on a reg that isn't R/W?
         addi    ga,0fffdh
         mov     tp,[ga]
@@ -4303,7 +4306,7 @@ x3586:  addi    ga,3h
         jbt     [gc].16h,5,x35bc
         clr     [gc].vhw+wdc30,4	; XXX clr on a reg that isn't R/W?
 x35bc:  jzb     [gc].8h,x35d5
-x35c0:  orbi    [gc].0ch,0ffc0h
+x35c0:  orbi    [gc].0ch,0c0h
         jmp     x35d2
 
 x35c7:  movi    gb,7fe2h
@@ -4386,23 +4389,23 @@ x36b3:  jnbt    [gc].0eh,4,x36bc
         setb    [gc],1
         setb    [gc].1h,3
 x36bc:  jnbt    [gc].0eh,5,x36c4
-        movbi   [gc].8h,0ffffh
+        movbi   [gc].8h,0ffh
 x36c4:  jnbt    [gc].0eh,6,x36cc
-        movbi   [gc].3h,0ffffh
+        movbi   [gc].3h,0ffh
 x36cc:  jnbt    [gc].0fh,4,x36d4
-        movbi   [gc].4h,0ffffh
+        movbi   [gc].4h,0ffh
 x36d4:  jnbt    [gc].0fh,5,x36dc
-        movbi   [gc].5h,0ffffh
+        movbi   [gc].5h,0ffh
 x36dc:  jnbt    [gc].0fh,6,x36ea
-        movbi   [gc].6h,0ffffh
+        movbi   [gc].6h,0ffh
         setb    [gc],7
-        orbi    [gc].0ch,0ffc0h
+        orbi    [gc].0ch,0c0h
 x36ea:  clr     [gc].vhw+wdc30,7	; XXX clr on a reg that isn't R/W?
         ljmp    x3632
 
 x36f1:  mov     [ga].4h,ix
         mov     [ga].6h,gc
-        movbi   ix,0fff0h
+        movbi   ix,0f0h
         movbi   bc,0h
         movi    gc,7f10h
 x3701:  mov     [gc+ix+],bc
@@ -4413,7 +4416,7 @@ x3701:  mov     [gc+ix+],bc
 
 ; XXX possibly cmd_floppy_xfer_status
 x370e:  mov     [ga].3h,ix
-        movbi   ix,0fff4h
+        movbi   ix,-12
         movi    gb,7f27h
         movi    gc,7f75h
 x371c:  mov     [gc+ix+],[gb+ix]
@@ -4425,7 +4428,7 @@ x371c:  mov     [gc+ix+],[gb+ix]
 x372c:  mov     [ga].4h,ix
         mov     [ga].6h,gc
         mov     [ga].8h,gb
-        movbi   ix,0fff4h
+        movbi   ix,-12
         movi    gb,7f0ch
         movi    gc,7f27h
 x3740:  mov     [gc+ix+],[gb+ix]
@@ -4437,7 +4440,7 @@ x3740:  mov     [gc+ix+],[gb+ix]
 
 x3752:  movb    [ga].3h,ix
         movb    mc,[ga].3h
-        orbi    mc,0ff80h
+        orbi    mc,080h
         jnbt    [gc].vhw+rdc30,0,x3762
         andbi   mc,7fh
 x3762:  movb    [gc].0f9h,mc
@@ -4446,7 +4449,7 @@ x3762:  movb    [gc].0f9h,mc
 x3767:  movi    gc,7fe2h
         andbi   [gc+ix],2bh
         movi    gc,7f00h
-        andbi   [gc].16h,0ff9bh
+        andbi   [gc].16h,09bh
         mov     tp,[ga]
 
 ; XXX possibly cmd_floppy_spin_down
@@ -4456,10 +4459,10 @@ x3767:  movi    gc,7fe2h
 ; XXX possibly cmd_floppy_diag
 x3778:  lcall   [ga],x36f1
         setb    [gc],6
-        movbi   [gc].0ch,0ffc9h
+        movbi   [gc].0ch,0c9h
         jmp     x3792
 
-        orbi    [gc].0ch,0ffc0h
+        orbi    [gc].0ch,0c0h
         jmp     x3792
 
 x378c:  addi    ix,0e2h
