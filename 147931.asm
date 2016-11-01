@@ -80,7 +80,7 @@ s00_seek_complete	equ	2
 s00_data_sync		equ	3
 s00_fault		equ	4
 s00_bus_ack		equ	5
-s00_id_no_compare	equ	6
+s00_id_no_compare	equ	6	; low if mismatch or ECC error
 s00_timeout		equ	7
 s00_isbx_217_present	equ	8
 s00_int_00		equ	9
@@ -109,15 +109,16 @@ wdc08		equ	rdc08	; 8008h: clear index and ID not compare latches
 
 		ds	6
 
-rdc10:		ds	2	; 8010h
+rdc10:		ds	2	; 8010h: read disk data bus
 
-wdc10		equ	rdc10	; 8010h: write to disk control register
+wdc10		equ	rdc10	; 8010h: write to disk data bus
 
 		ds	6
 
 rdc18:		ds	2	; 8018h: raise 8089 channel 2 CA input
 
 wdc18		equ	rdc18	; 8018h: write to unit select and control registers
+				;   bits 4..3: unit number, complement
 
 		ds	6
 
@@ -135,7 +136,10 @@ dc_data:	ds	2	; 8028h: data register
 
 		ds	6
 
-rdc30:		ds	2	; 8030h: read vendor bits 3 and 4
+rdc30:		ds	2	; 8030h: bit 1 - W26 vendor 1
+			   	;        bit ? - W37 vendor 3
+				;        bit ? - W38 vendor 4
+				;        read
 
 wdc30		equ	rdc30	; 8030h: write sector ID to high comparator
 				;        start track format operation
@@ -158,11 +162,26 @@ isbx_217_ch1		equ	0c0b0h
 ; registers relative to isbx_217_ch0:
 tc_ch0_reg_s	struc
 tc_cmd_param:		ds	1		; write
+; tape controller parameter byte 0:
+;   bits 7..4: count of additional parameter bytes
+;   bits 3..2: drive type
+;              00 = Archive
+;              10 = 3M
+;   bits 1..0: unit number
 tc_drive_status		equ	tc_cmd_param	; read
 			ds	1
 
 tc_cmd_func:		ds	1		; write
+
 tc_upi_status		equ	tc_cmd_func	; read
+tc_upi_obf		equ	0		; output buffer full
+tc_upi_ibf		equ	1		; input_buffer_full
+tc_upi_f0		equ	2
+tc_upi_f1		equ	3
+tc_upi_st4		equ	4
+tc_upi_st5		equ	5
+tc_upi_st6		equ	6
+tc_upi_buffer_ready	equ	7
 tc_ch0_reg_s	ends
 
 ; registers relative to isbx_217_ch0:
@@ -225,7 +244,7 @@ iopb:		ds	30
 
 		ds	1
 
-short_term_status_buffer:
+st_status_buffer:
 		ds	12
 
 		ds	31
@@ -253,6 +272,64 @@ iopb_data_ptr:	ds	4
 iopb_req_count:	ds	4
 iopb_gen_addr:	ds	4
 iopb_s		ends
+
+
+status_buf_s	struc
+status_byte_0:		ds	1
+sb0_invalid_function		equ	0
+sb0_ram_error			equ	3
+sb0_rom_error			equ	4
+sb0_seek_in_progress		equ	5
+sb0_illegal_format_type		equ	6
+sb0_end_of_medium		equ	7
+sb0_tape_invalid_function	equ	1
+sb0_tape_invalid_drive_function	equ	2
+sb0_tape_long_term_function	equ	5
+sb0_tape_illegal_configuration	equ	6
+
+status_byte_1:		ds	1
+sb1_illegal_sector_size		equ	0
+sb1_diagnostic_fault		equ	1
+sb1_no_index			equ	2
+sb1_invalid_function		equ	3
+sb1_sector_not_found		equ	4
+sb1_invalid_address		equ	5
+sb1_unit_not_ready		equ	6
+sb1_write_protected		equ	7
+sb1_tape_length_error		equ	0
+sb1_tape_no_response		equ	2
+sb1_tape_cartridge_missing	equ	4
+sb1_tape_length_error		equ	0
+
+status_byte_2:		ds	1
+sb2_data_field_ecc_error	equ	3
+sb2_id_field_ecc_error		equ	4
+sb2_drive_Fault			equ	5
+sb2_cylinder_address_miscompare	equ	6
+sb2_seek_error			equ	7
+sb2_tape_soft_error		equ	1
+sb2_tape_parity_error		equ	2
+sb2_tape_data_error		equ	3
+sb2_tape_buffer_over_under_run	equ	6
+
+desired_cylinder:	ds	2
+desired_head_volume:	ds	1
+desired_sector:		ds	1
+
+actual_cylinder_flags:	ds	2	; bits 5..4 = sector size
+					;   00 128 bytes
+					;   01 256 bytes
+					;   10 512 bytes
+					;   11 1024 bytes
+					; bits 7..6 = track type
+					;   00 data track
+					;   01 assigned alternate track
+					;   10 defective track
+					;   11 invalid configuration
+actual_head_volume:	ds	1
+actual_sector:		ds	1
+retry_count:		ds	1
+status_buf_s	ends
 
 
         ljmp    chan1_prog_start
@@ -317,7 +394,7 @@ x006e:
         andb    mc,[gc].iopb+iopb_unit
         jz      mc,x00a1
         movbi   [ga].3h,0ffffh
-        movi    [gc].2fh,6000h
+        movi    [gc].st_status_buffer+status_byte_0,6000h
         movbi   [gc].iopb+iopb_unit,0h
 x00a1:  movb    mc,[gc].iopb+iopb_function
         addi    mc,0e0h
@@ -325,8 +402,7 @@ x00a1:  movb    mc,[gc].iopb+iopb_function
         ljz     mc,x0183
 
 cmd_invalid:
-	movi    [gc].2fh,801h	; status byte 0, invalid iSBC 215G function
-				; status byte 1, invalid function code
+	movi    [gc].st_status_buffer+status_byte_0,(1<<sb0_invalid_function)+(100h<<sb1_invalid_function)
 x00b5:  movbi   [gc].31h,0h
         movbi   bc,0h
         jmp     x00c5
@@ -362,8 +438,8 @@ x00dc:  movb    [gc].vhw+wdc08,gb
         jmp     x012c
 
 x0118:  movbi   mc,1h
-        jnz     [gc].2fh,x0123
-        jzb     [gc].31h,x012c
+        jnz     [gc].st_status_buffer+status_byte_0,x0123
+        jzb     [gc].st_status_buffer+status_byte_2,x012c
 x0123:  orbi    mc,080h
         jnz     bc,x012c
         orbi    mc,40h
@@ -445,7 +521,7 @@ x01ba:  clr     [gc].1h,3
         movb    [ga],[gc].iopb+iopb_function
         andbi   [ga],0f0h
         jzb     [ga],x01d4
-x01cb:  movi    [gc].2fh,40h
+x01cb:  movi    [gc].st_status_buffer+status_byte_0,(1<<sb0_illegal_format_type)
         ljmp    x00b5
 
 x01d4:  movb    ix,[gc].iopb+iopb_unit
@@ -598,7 +674,7 @@ x0361:  movi    ga,7e00h
         jz      bc,x0373
         lcall   [ga],x2bc3
         jnz     bc,x0376
-x0373:  setb    [gc].30h,6
+x0373:  setb    [gc].st_status_buffer+status_byte_1,sb1_unit_not_ready
 x0376:  ljmp    x00c5
 
 x037a:  movi    gc,7f00h
@@ -720,7 +796,7 @@ cmd_track_seek:
         andi    [gc].32h,0fffh
         lcall   [ga].0fh,x208e
         jnbt    [gb+ix],2,x04fa
-        setb    [gc].2fh,5
+        setb    [gc].st_status_buffer,sb0_seek_in_progress
         movbi   bc,0h
         jmp     x054c
 
@@ -735,10 +811,10 @@ x04fa:  lcall   [ga],x20ba
         movbi   bc,0h
         jmp     x0523
 
-x051d:  setb    [gc].30h,6
+x051d:  setb    [gc].st_status_buffer+status_byte_1,sb1_unit_not_ready
         jmp     x054c
 
-x0523:  setb    [gc].30h,5
+x0523:  setb    [gc].st_status_buffer+status_byte_1,sb1_invalid_address
         jmp     x054c
 
 x0529:  movb    mc,[gc].34h
@@ -835,10 +911,10 @@ x0667:  jbt     [ga].9h,7,x0671
         movbi   bc,0ffh
         jmp     x068e
 
-x0671:  setb    [gc].30h,4
+x0671:  setb    [gc].st_status_buffer+status_byte_1,sb1_sector_not_found
         jmp     x067a
 
-x0677:  setb    [gc].2fh,6
+x0677:  setb    [gc].st_status_buffer,sb0_illegal_format_type
 x067a:  mov     [gc].35h,[gc].41h
         mov     [gc].36h,[gb]
         mov     [gc].38h,[gb].2h
@@ -971,11 +1047,11 @@ x081f:  ljmp    x00c5
 cmd_read_id:
         ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1def
-        movi    [gc].32h,0ffffh
-        movi    [gc].34h,0ffffh
+        movi    [gc].st_status_buffer+desired_cylinder,0ffffh
+        movi    [gc].st_status_buffer+desired_head_volume,0ffffh
         lcall   [ga].0fh,x208e
         jnbt    [gb+ix],2,x0846
-        setb    [gc].2fh,5
+        setb    [gc].st_status_buffer,sb0_seek_in_progress
         movbi   bc,0h
         jmp     x0881
 
@@ -1010,7 +1086,7 @@ cmd_diag:
         ljz     bc,x0933
         lcall   [ga].0fh,x208e
         jnbt    [gb+ix],2,x08b3
-        setb    [gc].2fh,5
+        setb    [gc].st_status_buffer+status_byte_0,sb0_seek_in_progress
         movbi   bc,0h
         ljmp    x0933
 
@@ -1053,7 +1129,7 @@ x0910:  movi    [gb+ix+],55aah
         lcall   [ga],x1a03
         lcall   [ga],x1000
         jnz     bc,x0936
-x0933:  setb    [gc].30h,1
+x0933:  setb    [gc].st_status_buffer+status_byte_1,sb1_diagnostic_fault
 x0936:  ljmp    x00c5
 
 
@@ -1101,7 +1177,7 @@ x0954:  addbi   gc,0feh
         jz      gb,x09a0
 
 x0996:  movi    gc,var_base
-        setb    [gc].2fh,4
+        setb    [gc].st_status_buffer+status_byte_0,sb0_rom_error
         movbi   bc,0h
 x09a0:  addbi   ga,0fch
         movi    gc,var_base
@@ -1135,12 +1211,12 @@ x09df:  mov     bc,[gb+ix+]
         jnz     ix,x09df
 
         movbi   bc,0ffh
-        movi    ga,var_base+short_term_status_buffer
+        movi    ga,var_base+st_status_buffer
         movi    [ga],0h
         jmp     x0a00
 
 x09f5:  movbi   bc,0h
-        movi    ga,var_base+short_term_status_buffer
+        movi    ga,var_base+st_status_buffer
         movi    [ga],8h
 x0a00:  movbi   [ga].2h,0h
         movp    [ga].1fh,gc
@@ -1248,7 +1324,7 @@ x0b3e:  movi    ga,isbx_217_ch1		; tape data
         movi    gc,var_base
         jmp     x0b50
 
-x0b49:  movi    ga,var_base+short_term_status_buffer
+x0b49:  movi    ga,var_base+st_status_buffer
 x0b4d:  lpd     gb,[gc].iopb+iopb_data_ptr
 x0b50:  mov     [gc].4eh,ga
 
@@ -1512,7 +1588,7 @@ x1063:  incb    [ga].0ch
 
 x1069:  jnzb    [ga].0dh,x1094
         jnbt    [gc].vhw+rdc00,s00_timeout,x1078
-        setb    [gc].30h,4
+        setb    [gc].st_status_buffer+status_byte_1,sb1_sector_not_found
         ljmp    x13ce
 
 x1078:  incb    [ga].0dh
@@ -1529,7 +1605,7 @@ x1078:  incb    [ga].0dh
 x1094:  decb    [ga].0bh
         jnzb    [ga].0bh,x1043
         jnzb    [ga].0ch,x111c
-        setb    [gc].30h,4
+        setb    [gc].st_status_buffer+status_byte_1,sb1_sector_not_found
         ljmp    x13ce
 
 x10a6:  lcall   [ga].0fh,x11fc
@@ -1557,10 +1633,10 @@ x10e5:  movb    bc,[gc].3fh
         andbi   [ga].2h,40h
         addb    [ga].2h,bc
         jnbt    [ga].2h,6,x1103
-        setb    [gc].2fh,6
+        setb    [gc].st_status_buffer+status_byte_0,sb0_illegal_format_type
         ljmp    x13ce
 
-x1103:  setb    [gc].30h,0
+x1103:  setb    [gc].st_status_buffer+status_byte_1,sb1_illegal_sector_size
         ljmp    x13ce
 
 x110a:  addbi   ga,12h
@@ -1591,8 +1667,8 @@ x1156:  notb    bc,[ga].0bh
 x1163:  incb    [ga].0bh
         decb    [ga].0dh
         jnzb    [ga].0dh,x1136
-        setb    [gc].30h,4
-        setb    [gc].31h,4
+        setb    [gc].st_status_buffer+status_byte_1,sb1_sector_not_found
+        setb    [gc].st_status_buffer+status_byte_2,sb2_id_field_ecc_error
         ljmp    x13ce
 
 x1177:  movb    [ga].0ch,[ga].0bh
@@ -1672,7 +1748,7 @@ x125d:  dec     bc
         jnbt    [gc].0c7h,7,x125d
         mov     tp,[ga].12h
 
-x1269:  setb    [gc].30h,2
+x1269:  setb    [gc].st_status_buffer+status_byte_1,sb1_no_index
         ljmp    x13ce
 
 x1270:  addbi   ga,7h
@@ -1781,7 +1857,7 @@ x139d:  jnzb    [ga].9h,x13bd
         jnz     bc,x1419
 x13bd:  decb    [ga].7h
         jnzb    [ga].7h,x1373
-x13c4:  setb    [gc].30h,4
+x13c4:  setb    [gc].st_status_buffer+status_byte_1,sb1_sector_not_found
         jzb     [ga].8h,x13ce
         setb    [gc].31h,4
 x13ce:  movbi   bc,0h
@@ -1871,8 +1947,8 @@ x14c2:  jmcne   [gb],x14c8
 x14c8:  inc     cc
         jnz     cc,x14c2
         movi    gc,var_base
-        setb    [gc].31h,5
-        setb    [gc].30h,4
+        setb    [gc].st_status_buffer+status_byte_2,sb2_drive_fault
+        setb    [gc].st_status_buffer+status_byte_1,sb1_sector_not_found
         lcall   [ga].19h,x2971
         mov     tp,[ga].0fh
 
@@ -1931,8 +2007,8 @@ x1572:  movb    mc,[gc].1bh
         setb    [gc].30h,0
 x158a:  mov     ix,[ga].0ah
         movi    gc,var_base
-        jnz     [gc].2fh,x1599
-        jzb     [gc].31h,x159c
+        jnz     [gc].st_status_buffer+status_byte_0,x1599
+        jzb     [gc].st_status_buffer+status_byte_2,x159c
 x1599:  movbi   bc,0h
 x159c:  mov     tp,[ga]
 
@@ -2062,7 +2138,7 @@ x1724:  movi    gb,4008h
         mov     [gc].vhw+wdc30,[gc].3eh
         mov     [gc].vhw+wdc38,[gc].40h
         movi    ga,dc_reg_base+dc_data
-        movi    [gc].vhw+dc_data,19h
+        movi    [gc].vhw+dc_data,19h	; sync byte
         movbi   bc,8h
         movbi   [gc].vhw+wdc00,6h
         xfer    
@@ -2092,7 +2168,7 @@ x177a:  movi    gb,4008h
         movbi   bc,8h
         movi    ga,dc_reg_base+dc_data
         movbi   [gc].4eh,0h
-x1795:  movi    [gc].vhw+dc_data,0a1d9h
+x1795:  movi    [gc].vhw+dc_data,0a1d9h		; sync byte (Shugart/Quantum data field), address mark
         xfer    
         movbi   [gc].vhw+wdc00,6h
         tsl     [gc+ix],1h,x17b9
@@ -2166,13 +2242,13 @@ x185c:  movb    [gc].vhw+counter_1,cc
         mov     [gb+ix+],cc
         movi    [gb+ix+],4e4eh
         movi    cc,cc_gb_mem_to_ga_port_extt_no_bc
-        movi    [gc].vhw+dc_data,0a119h
+        movi    [gc].vhw+dc_data,0a119h		; sync byte, address mark?
         jnbt    [gc].1h,0,x189e
         movi    [gc].0c8h,140h
         jmp     x189e
 
 x1895:  movi    cc,cc_gb_mem_to_ga_port_extt
-        movi    [gc].vhw+dc_data,19h
+        movi    [gc].vhw+dc_data,19h		; sync byte
 x189e:  lcall   [ga].12h,x1252
         jz      bc,x1923
 x18a6:  mov     [gc].vhw+wdc08,bc
@@ -2198,10 +2274,10 @@ x18d8:  xfer
         movb    [gb].3h,ix
         movbi   bc,6h
         jnzb    [gc].0b9h,x18fd
-        movi    [gc].vhw+dc_data,0a119h
+        movi    [gc].vhw+dc_data,0a119h		; sync byte, address mark?
         jmp     x1902
 
-x18fd:  movi    [gc].vhw+dc_data,19h
+x18fd:  movi    [gc].vhw+dc_data,19h		; sync byte
 x1902:  movbi   [gc].vhw+wdc00,1h
         jmp     x18d8
 
@@ -2493,7 +2569,7 @@ x1d49:  movi    gb,7fdah
         jnbt    [gc].iopb+iopb_modifier,2,x1d63	; read/write deleted data
         setb    [gc].3ch,5
 x1d63:  jnbt    [gb+ix],2,x1d70
-        setb    [gc].2fh,5
+        setb    [gc].st_status_buffer+status_byte_0,sb0_seek_in_progress
         movbi   bc,0h
         ljmp    x1dea
 
@@ -2534,8 +2610,8 @@ x1dea:  addbi   ga,0fah
 x1def:  movbi   cc,0h
         mov     [gc].iopb+iopb_act_count,cc
         mov     [gc].iopb+iopb_act_count+2,cc
-        mov     [gc].2fh,cc
-        movb    [gc].31h,cc
+        mov     [gc].st_status_buffer+status_byte_0,cc
+        movb    [gc].st_status_buffer+status_byte_2,cc
         mov     [gc].3ah,cc
         mov     tp,[ga]
 
@@ -2613,11 +2689,11 @@ x1ea5:  movi    gb,4000h
         lcall   [ga],x1e07
         jmp     x1efd
 
-x1eee:  setb    [gc].30h,5
-x1ef1:  setb    [gc].2fh,6
+x1eee:  setb    [gc].st_status_buffer+status_byte_1,sb1_invalid_address
+x1ef1:  setb    [gc].st_status_buffer+status_byte_0,sb0_illegal_format_type
         jmp     x1efa
 
-x1ef7:  setb    [gc].30h,4
+x1ef7:  setb    [gc].st_status_buffer+status_byte_1,sb1_sector_not_found
 x1efa:  movbi   bc,0h
 x1efd:  addbi   ga,0f6h
         mov     ix,[ga].8h
@@ -2660,7 +2736,7 @@ x1f61:  movbi   mc,0h
         not     mc
         and     mc,[gc].48h
         jnz     mc,x1f88
-        setb    [gc].2fh,7
+        setb    [gc].st_status_buffer+status_byte_0,sb0_end_of_medium
         movbi   bc,0h
         jmp     x1f8f
 
@@ -2837,8 +2913,8 @@ x2173:  jbt     [gc].51h,7,x219f
         jnbt    [gc].51h,6,x219f
 x2183:  movb    ix,[gc].0b4h
         jnbt    [gc].51h,0,x2193
-        movi    [gc].2fh,0h
-        movbi   [gc].31h,0h
+        movi    [gc].st_status_buffer+status_byte_0,0h
+        movbi   [gc].st_status_buffer+status_byte_2,0h
 x2193:  addbi   ga,0fbh
         jbt     [gc].51h,5,x219d
         movbi   bc,0h
@@ -4249,9 +4325,9 @@ x3469:  andi    [gc].27h,1ffh
 
 x3479:  jnz     [gc].62h,x349d
         movi    gb,isbx_217_ch0
-        jnbt    [gb].tc_upi_status,6,x3490
-        movbi   [gb],20h		; tc_cmd_param
-x3488:  jnbt    [gb].tc_upi_status,0,x3488
+        jnbt    [gb].tc_upi_status,6,x3490	; XXX bit 6? what's bit 6?
+        movbi   [gb],20h		; tc_cmd_param - drive #0, 3M?
+x3488:  jnbt    [gb].tc_upi_status,tc_upi_obf,x3488
         movb    [ga],[gb]		; tc_drive_status
 x3490:  movbi   [gb].tc_cmd_func,081h
         lcall   [ga],x3528
@@ -4270,7 +4346,7 @@ x34ad:  setb    [gc],6
 
 x34b2:  andbi   [gc].16h,0dbh
 x34b6:  orbi    [gc].0ch,0c9h
-        setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
+        setb    [gc].vhw+wdc30,1	; XXX setb on a reg that isn't R/W?
 x34bd:  jnbt    [gc].vhw+rdc30,0,x34c7
         mov     [gc].60h,[gc].0f9h
 x34c7:  addbi   ga,0fdh
@@ -4314,17 +4390,17 @@ x3523:  inc     [gc].50h
 x3528:  addi    ga,3h
 x352c:  movi    gb,isbx_217_ch0
         movi    mc,0ec78h
-x3534:  jbt     [gb].tc_upi_status,0,x354a
-        jnbt    [gb].tc_upi_status,1,x3557
+x3534:  jbt     [gb].tc_upi_status,tc_upi_obf,x354a
+        jnbt    [gb].tc_upi_status,tc_upi_ibf,x3557
         inc     mc
         jnz     mc,x3534
         setb    [gc].1h,2
-        setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
+        setb    [gc].vhw+wdc30,1	; XXX setb on a reg that isn't R/W?
         jmp     x3557
 
 x354a:  call    [ga],x355d
         jbt     [gc].vhw+rdc30,7,x3557
-        setb    [gc].vhw+wdc30,2	; XXX clr on a reg that isn't R/W?
+        setb    [gc].vhw+wdc30,2	; XXX setb on a reg that isn't R/W?
         jmp     x352c
 
 x3557:  addi    ga,0fffdh
@@ -4338,7 +4414,7 @@ x355d:  addi    ga,3h
         jnzb    [gc].5h,x3578
         jzb     [gc].8h,x357c
 x3578:  orbi    [gc].0ch,080h
-x357c:  andbi   [gc].vhw+wdc30,7dh	; XXX clr on a reg that isn't R/W?
+x357c:  andbi   [gc].vhw+wdc30,7dh	; XXX andbi on a reg that isn't R/W?
         addi    ga,0fffdh
         mov     tp,[ga]
 
@@ -4365,7 +4441,7 @@ x35c0:  orbi    [gc].0ch,0c0h
 x35c7:  movi    gb,7fe2h
         jbt     [gc].2h,3,x35c0
         setb    [gc].0ch,7
-x35d2:  setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
+x35d2:  setb    [gc].vhw+wdc30,1	; XXX setb on a reg that isn't R/W?
 x35d5:  orbi    [gc].0ch,9h
         addi    ga,0fffah
         mov     mc,[ga]
@@ -4384,7 +4460,7 @@ x35ff:  movi    gc,7f00h
         movbi   mc,68h
         movi    bc,0h
 x360a:  movi    gb,isbx_217_ch0
-        jbt     [gb].tc_upi_status,0,x3638
+        jbt     [gb].tc_upi_status,tc_upi_obf,x3638
         jbt     [ga],0,x3619
         jbt     [gc].16h,6,x3623
 x3619:  dec     bc
@@ -4392,8 +4468,8 @@ x3619:  dec     bc
         dec     mc
         jnz     mc,x360a
 x3623:  setb    [gc].1h,2
-        setb    [gc].vhw+wdc30,7	; XXX clr on a reg that isn't R/W?
-        setb    [gc].vhw+wdc30,1	; XXX clr on a reg that isn't R/W?
+        setb    [gc].vhw+wdc30,7	; XXX setb on a reg that isn't R/W?
+        setb    [gc].vhw+wdc30,1	; XXX setb on a reg that isn't R/W?
         addi    ga,0fffeh
         mov     ix,[ga]
 x3632:  addi    ga,0fffdh
