@@ -1,9 +1,14 @@
 This repository contains partially reverse-engineered firmware of
 Intel iSBC 215 Multibus Winchester disk controllers.
 
-Presently it contains 147931.asm, which is derived from the iSBC 215G
-firmware in EPROMs with part numbers 147931-001 and 147931-002.  This
-is believed to be a production release of "normal" iSBC 215G firmware,
+Contents:
+
+* 14458x.asm, from 2732 EPROMs with part numbers 144580-001 and 144581-001.
+These are from an iMDX 704 controller (iSBC 215B), part of an iMDX 750
+subsystem for Series II/III MDS.
+
+* 147931.asm, from 2764 EPROMs with part numbers 147931-001 and 147931-002.
+This is believed to be a production release of "normal" iSBC 215G firmware,
 as opposed to special firmware for the Intel MDS Series II/III/IV
 development systems.
 
