@@ -791,9 +791,9 @@ x04c6:  lcall   [ga],x0a60
 cmd_track_seek:
         ljbt    [gc],2,x3778		; tape? jump if so
         lcall   [ga],x1def
-        movb    [gc].34h,[gc].20h
-        mov     [gc].32h,[gc].1eh
-        andi    [gc].32h,0fffh
+        movb    [gc].st_status_buffer.desired_head_volume,[gc].iopb+iopb_head
+        mov     [gc].st_status_buffer+desired_cylinder,[gc].iopb+iopb_cylinder
+        andi    [gc].st_status_buffer+desired_cylinder,0fffh
         lcall   [ga].0fh,x208e
         jnbt    [gb+ix],2,x04fa
         setb    [gc].st_status_buffer,sb0_seek_in_progress
@@ -982,7 +982,7 @@ cmd_write_data:
         lcall   [ga],x0bfc
 x0761:  jz      bc,x07b6
         mov     [ga].4h,bc
-        lpd     gb,[gc].22h
+        lpd     gb,[gc].iopb+iopb_data_ptr
 x076a:  movi    cc,cc_gb_mem_to_ga_mem
         lcall   [ga],x0be4
         movbi   [ga].3h,2h
@@ -1018,7 +1018,7 @@ cmd_read_data:
         lcall   [ga],x0baa
         jz      bc,x081c
         mov     [ga].4h,bc
-        lpd     gb,[gc].22h
+        lpd     gb,[gc].iopb+iopb_data_ptr
         movp    [ga],gb
         addbi   ga,9h
 x07de:  lcall   [ga],x1000
@@ -1067,7 +1067,7 @@ x0846:  lcall   [ga],x20ba
         movbi   bc,5h
         movb    [gc].iopb+iopb_act_count,bc
         movi    cc,cc_ga_mem_to_gb_mem
-        lpd     gb,[gc].22h
+        lpd     gb,[gc].iopb+iopb_data_ptr
         movbi   [ga].3h,2h
         lcall   [ga],x0a60
         movbi   bc,0ffh
@@ -1095,8 +1095,8 @@ x08b3:  lcall   [ga],x2bc3
         jmp     x0936
 
 diag_hd_rw_test:
-	mov     [gc].1eh,cc
-        movi    [gc].20h,100h
+	mov     [gc].iopb+iopb_cylinder,cc
+        movi    [gc].iopb+iopb_head_sector,100h	; head 0 sector 1
         lcall   [ga],x1d00
         jz      bc,x0933
         lcall   [ga],x1761
@@ -1520,7 +1520,7 @@ x0d52:  mov     cc,[ga].6h
         jz      bc,x0d77
         not     bc
         inc     bc
-        add     bc,[gc].26h
+        add     bc,[gc].iopb+iopb_req_count
         mov     [gc].iopb+iopb_act_count,bc
 x0d6b:  movi    [gc].iopb+iopb_act_count+2,0h
         movbi   bc,0ffh
@@ -1997,8 +1997,8 @@ x1565:  jnbt    [ga].2h,3,x156f
         jmp     x1572
 
 x156f:  setb    [gc].31h,5
-x1572:  movb    mc,[gc].1bh
-        addi    mc,0fffdh
+x1572:  movb    mc,[gc].iopb+iopb_function
+        addi    mc,-3
         jz      mc,x158a
         notb    mc,[ga].8h
         inc     mc
@@ -2542,9 +2542,9 @@ x1b59:  db	00h
 
 x1d00:  addbi   ga,6h
         lcall   [ga],x1def
-        mov     [gc].32h,[gc].1eh
-        mov     [gc].34h,[gc].20h
-        andi    [gc].32h,0fffh
+        mov     [gc].st_status_buffer+desired_cylinder,[gc].iopb+iopb_cylinder
+        mov     [gc].st_status_buffer+desired_head_volume,[gc].iopb+iopb_head ; also sector
+        andi    [gc].st_status_buffer+desired_cylinder,0fffh
         lcall   [ga],x205e
         lcall   [ga],x2001
         jnz     bc,x1d34
@@ -4602,6 +4602,7 @@ x3792:  movb    [gc].0f7h,[gc].0ch
 	fill	3bebh,0ffh
 
 x3beb:  db      000h,010h,020h,030h,030h
+
 	db	000h,000h,0a9h,022h,052h,045h,0fbh,067h
 	db	0a1h,082h,008h,0a0h,0f3h,0c7h,05ah,0e5h
 	db	042h,005h,0ebh,027h,010h,040h,0b9h,062h
@@ -4730,5 +4731,7 @@ x3beb:  db      000h,010h,020h,030h,030h
 	db	03eh,064h,01eh,031h,07eh,0ceh,05eh,09bh
 	db	05fh,098h,07fh,0cdh,01fh,032h,03fh,067h
 	db	07fh,0cch,05fh,099h,03fh,066h,01fh,033h
-	db	000h,000h,0ffh,0ffh,055h,055h,0aah,0aah
+	db	000h,000h,0ffh,0ffh
+
+	db	055h,055h,0aah,0aah
 	db	055h,055h,003h,007h,085h,0ffh,04ah,00dh
