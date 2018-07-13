@@ -3,14 +3,10 @@ Intel iSBC 215 Multibus Winchester disk controllers.
 
 Contents:
 
-* 14458x.asm, from 2732 EPROMs with part numbers 144580-001 and 144581-001.
-These are from an iMDX 704 controller (iSBC 215B), part of an iMDX 750
-subsystem for Series II/III MDS.
-
-* 147931.asm, from 2764 EPROMs with part numbers 147931-001 and 147931-002.
-This is believed to be a production release of "normal" iSBC 215G firmware,
-as opposed to special firmware for the Intel MDS Series II/III/IV
-development systems.
+| Source file | EPROM part numbers     | EPROM type | Controller |
+| ----------- | ---------------------- | ---------- | -----------|
+| 14458x.asm  | 144580-001, 144581-001 | 2732       | iMDX 704 (iSBC 215B), part of iMDX 750 subsystem for Series II/III MDS |
+| 147931.asm  | 147931-001, 147931-002 | 2764       | iSBC 215G  |
 
 ## Technical documentation for iSBC 215 and related hardware
 Large PDF files of scans, from the [Bitsavers](http://bitsavers.org/) collection:
